@@ -1,0 +1,15 @@
+[default.probe]
+protocol="Jtag"
+
+[default.general]
+chip = "esp32c3" # uncomment this line for micro:bit V2
+
+[default.flashing]
+enabled=true
+preverify=true
+
+[default.rtt]
+enabled = true
+
+[default.gdb]
+enabled = false

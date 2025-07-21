@@ -1,11 +1,9 @@
 [package]
 edition = "2024"
-name    = "rusty-roller-blinds"
+name = "crabroll"
+description = "Stepper motor powered roller blinds that speak MQTT"
+license = "TODO"
 version = "0.1.0"
-
-[[bin]]
-name = "rusty-roller-blinds"
-path = "./src/bin/main.rs"
 
 [dependencies]
 defmt = "1.0.1"
@@ -58,6 +56,7 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
 ] }
 static_cell = { version = "2.1.0" }
 defmt-rtt = "1.0.0"
+bitvec = { version = "1.0.1", default-features = false, features = ["atomic"] }
 
 
 [profile.dev]

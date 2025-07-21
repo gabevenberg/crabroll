@@ -57,6 +57,7 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
 static_cell = { version = "2.1.0" }
 defmt-rtt = "1.0.0"
 bitvec = { version = "1.0.1", default-features = false, features = ["atomic"] }
+thiserror = { version = "2.0.12", default-features = false }
 
 
 [profile.dev]

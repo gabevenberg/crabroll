@@ -183,6 +183,7 @@ dependencies = [
  "panic-rtt-target",
  "smoltcp",
  "static_cell",
+ "thiserror",
 ]
 
 [[package]]

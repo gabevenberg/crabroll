@@ -1,4 +1,4 @@
-use defmt::{Format, error, info, warn};
+use defmt::{Format, error, info};
 use defmt_rtt as _;
 use embedded_io_async::{Error, ErrorType, Read, Write};
 use thiserror::Error;
@@ -13,6 +13,8 @@ pub enum UartError<U: Error> {
     CrcMismatch,
     #[error("Unexpected end of stream")]
     UnexpectedEos,
+    #[error("Got reply from wrong address, expected {1}, got {1}")]
+    UnexpectedAdress(u8, u8),
 }
 
 #[derive(Format, Debug)]
@@ -81,11 +83,7 @@ impl<U: Read + Write + ErrorType> Tmc2209<U> {
                 // That was a reply from a different adress than expected, hope no other task was
                 // waiting for that!
                 if returned_address != (slave_address & 0x7F) {
-                    warn!(
-                        "got reply from {:02x}, expected from {:02x}",
-                        returned_address, slave_address
-                    );
-                    continue;
+                    return Err(UartError::UnexpectedAdress(slave_address, returned_address));
                 }
 
                 // calc the CRC and return either the message or the CRC error.

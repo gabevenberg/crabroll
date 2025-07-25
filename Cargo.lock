@@ -179,6 +179,7 @@ dependencies = [
  "esp-hal",
  "esp-hal-embassy",
  "esp-wifi",
+ "heapless",
  "panic-rtt-target",
  "smoltcp",
  "static_cell",

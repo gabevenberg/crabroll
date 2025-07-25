@@ -3,6 +3,9 @@ runner = "probe-rs attach --chip=esp32c3 --preverify --always-print-stacktrace -
 
 [env]
 DEFMT_LOG="info"
+SSID="REPLACE"
+PASSWORD="ME"
+HOSTNAME="Crabroll"
 
 [build]
 rustflags = [

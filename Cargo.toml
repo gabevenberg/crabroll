@@ -20,6 +20,8 @@ embassy-net = { version = "0.7.0", features = [
   "medium-ethernet",
   "tcp",
   "udp",
+  "dhcpv4-hostname",
+  "alloc",
 ] }
 embedded-io = { version = "0.6.1", features = ["defmt-03"] }
 embedded-io-async = { version = "0.6.1", features = ["defmt-03"] }
@@ -54,10 +56,11 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
   "socket-tcp",
   "socket-udp",
 ] }
-static_cell = { version = "2.1.0" }
+static_cell = "2.1.0"
 defmt-rtt = "1.0.0"
 thiserror = { version = "2.0.12", default-features = false }
 bitfield-struct = "0.11.0"
+heapless = { version = "0.8.0", features = ["defmt-03"] }
 
 
 [profile.dev]

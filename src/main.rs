@@ -5,6 +5,7 @@
     reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
     holding buffers for the duration of a data transfer."
 )]
+#![allow(clippy::unusual_byte_groupings)]
 
 mod tmc2209;
 mod wifi;
@@ -68,8 +69,8 @@ async fn main(spawner: Spawner) {
     spawner.spawn(connection(wifi_controller)).unwrap();
     spawner.spawn(network_task(runner)).unwrap();
 
-    let _step_pin = Output::new(peripherals.GPIO6, Level::Low, OutputConfig::default());
-    let _dir_pin = Output::new(peripherals.GPIO7, Level::Low, OutputConfig::default());
+    let step_pin = Output::new(peripherals.GPIO7, Level::Low, OutputConfig::default());
+    let dir_pin = Output::new(peripherals.GPIO6, Level::Low, OutputConfig::default());
     let uart = Uart::new(
         peripherals.UART0,
         Config::default()
@@ -81,19 +82,37 @@ async fn main(spawner: Spawner) {
     .with_rx(peripherals.GPIO20)
     .into_async();
 
-    let mut tmc2209 = Tmc2209::new(uart);
+    let mut tmc2209 = Tmc2209::new(uart, [true, false, false, false])
+        .await
+        .unwrap();
+    // setup general config
     tmc2209.write_register(0, 0, 0b0111000001).await.unwrap();
-    info!(
-        "0th register is {=u32:08x}",
-        tmc2209.read_register(0, 0).await.unwrap()
-    );
-    info!(
-        "IT counter register is {=u32:08x}",
-        tmc2209.read_register(0, 0x02).await.unwrap()
-    );
+
+    // set microstepping to fullstep
+    tmc2209
+        .write_register(0, 0x6c, 0b0001_1000_000000000000000110010011)
+        .await
+        .unwrap();
+
+    spawner.spawn(turn_motor(step_pin, dir_pin)).unwrap();
 
     while !stack.is_config_up() {
         Timer::after(Duration::from_millis(500)).await;
     }
     info!("got IP: {}", stack.config_v4().unwrap().address);
+}
+
+#[embassy_executor::task]
+async fn turn_motor(mut step_pin: Output<'static>, mut dir_pin: Output<'static>) {
+    loop {
+        for _ in 0..200 {
+            step_pin.set_high();
+            Timer::after(Duration::from_hz(200 * 2)).await;
+            step_pin.set_low();
+            Timer::after(Duration::from_hz(200 * 2)).await;
+        }
+        Timer::after_nanos(100).await;
+        dir_pin.toggle();
+        Timer::after_nanos(100).await;
+    }
 }

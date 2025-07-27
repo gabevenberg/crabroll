@@ -1,4 +1,5 @@
-use defmt::{Format, error, info};
+use defmt::{Format, debug, error};
+
 use defmt_rtt as _;
 use embedded_io_async::{Error, ErrorType, Read, Write};
 use thiserror::Error;
@@ -13,18 +14,34 @@ pub enum UartError<U: Error> {
     CrcMismatch,
     #[error("Unexpected end of stream")]
     UnexpectedEos,
-    #[error("Got reply from wrong address, expected {1}, got {1}")]
+    #[error("Adress was not populated at init")]
+    UnpopulatedAdress,
+    #[error("Incorrect Interface Transmission Counter, write did not take")]
+    IncorrectIfcnt,
+    #[error("Got reply from wrong register address, expected {0}, got {1}")]
     UnexpectedAdress(u8, u8),
 }
 
 #[derive(Format, Debug)]
 pub struct Tmc2209<U: Read + Write + ErrorType> {
     uart: U,
+    pub ifcnt: [Option<u8>; 4],
 }
 
 impl<U: Read + Write + ErrorType> Tmc2209<U> {
-    pub fn new(uart: U) -> Self {
-        Self { uart }
+    pub async fn new(uart: U, addrs_present: [bool; 4]) -> Result<Self, UartError<U::Error>> {
+        let mut tmp = Self {
+            uart,
+            ifcnt: addrs_present.map(|b| if b { Some(0) } else { None }),
+        };
+        let mut present = tmp.ifcnt;
+        for (addr, ifcnt) in present.iter_mut().enumerate() {
+            if ifcnt.is_some() {
+                *ifcnt = Some(tmp.read_register(addr as u8, 0x02).await? as u8)
+            }
+        }
+        tmp.ifcnt = present;
+        Ok(tmp)
     }
 
     pub async fn write_register(
@@ -33,11 +50,36 @@ impl<U: Read + Write + ErrorType> Tmc2209<U> {
         register: u8,
         data: u32,
     ) -> Result<(), UartError<U::Error>> {
-        let message = Self::construct_write_uart_message(slave_address, register, data);
-        self.uart
-            .write_all(&message)
-            .await
-            .map_err(UartError::TxError)
+        self.write_register_unchecked(slave_address, register, data)
+            .await?;
+
+        if self.ifcnt[slave_address as usize].ok_or(UartError::UnpopulatedAdress)?
+            == self.read_register(slave_address, 0x02).await? as u8
+        {
+            debug!("writing {=u32:02x} succeded", data);
+            Ok(())
+        } else {
+            Err(UartError::IncorrectIfcnt)
+        }
+    }
+
+    pub async fn write_register_unchecked(
+        &mut self,
+        slave_address: u8,
+        register: u8,
+        data: u32,
+    ) -> Result<(), UartError<U::Error>> {
+        if let Some(ifcnt) = self.ifcnt[slave_address as usize] {
+            let message = Self::construct_write_uart_message(slave_address, register, data);
+            self.uart
+                .write_all(&message)
+                .await
+                .map_err(UartError::TxError)?;
+            self.ifcnt[slave_address as usize] = Some(ifcnt.wrapping_add(1));
+            Ok(())
+        } else {
+            Err(UartError::UnpopulatedAdress)
+        }
     }
 
     // FIXME: Techincally, the magic bytes of [0x05, 0xff] could be part of the body of the message.
@@ -47,12 +89,11 @@ impl<U: Read + Write + ErrorType> Tmc2209<U> {
         register: u8,
     ) -> Result<u32, UartError<U::Error>> {
         const REPLY_BYTES: [u8; 2] = [0x05, 0xff];
-        let sent = self
+        self
             .uart
-            .write(&Self::construct_read_uart_message(slave_address, register))
+            .write_all(&Self::construct_read_uart_message(slave_address, register))
             .await
             .map_err(UartError::TxError)?;
-        info!("sent {} bytes through uart.", sent);
 
         let mut buffer: [u8; 8] = [0; 8];
         loop {
@@ -61,14 +102,14 @@ impl<U: Read + Write + ErrorType> Tmc2209<U> {
                 .read(&mut buffer)
                 .await
                 .map_err(UartError::RxError)?;
-            info!("received: {=[u8]:02x}", buffer[..len]);
+            debug!("received: {=[u8]:02x}", buffer[..len]);
 
             // search for the 'magic bytes' indicating the start of a message.
             if let Some(message_start) = buffer[..len].windows(2).position(|b| b == REPLY_BYTES) {
                 // if we find it, we put it at the very start of the buffer.
                 buffer.copy_within(message_start..len, 0);
                 let fragment_end = len - message_start;
-                info!("Got fragment! {=[u8]:02x}", buffer[..fragment_end]);
+                debug!("Got fragment! {=[u8]:02x}", buffer[..fragment_end]);
                 // now we continue reading till we fill the rest of the buffer.
                 self.uart
                     .read_exact(&mut buffer[fragment_end..])
@@ -77,13 +118,13 @@ impl<U: Read + Write + ErrorType> Tmc2209<U> {
                         embedded_io::ReadExactError::UnexpectedEof => UartError::UnexpectedEos,
                         embedded_io::ReadExactError::Other(i) => UartError::RxError(i),
                     })?;
-                info!("Message is: {=[u8;8]:02x}", buffer);
+                debug!("Message is: {=[u8;8]:02x}", buffer);
 
-                let returned_address = buffer[3];
-                // That was a reply from a different adress than expected, hope no other task was
+                let returned_address = buffer[2];
+                // That was a reply from a different register adress than expected, hope no other task was
                 // waiting for that!
-                if returned_address != (slave_address & 0x7F) {
-                    return Err(UartError::UnexpectedAdress(slave_address, returned_address));
+                if returned_address != (register & 0x7F) {
+                    return Err(UartError::UnexpectedAdress(register, returned_address));
                 }
 
                 // calc the CRC and return either the message or the CRC error.

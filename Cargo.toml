@@ -50,7 +50,8 @@ defmt-rtt = "1.0"
 thiserror = { version = "2.0", default-features = false }
 bitfield-struct = "0.11"
 heapless = { version = "0.8", features = ["defmt-03"] }
-rust-mqtt = { version = "0.3", default-features = false, features = ["defmt", "no_std"] }
+rust-mqtt = { version = "0.3", default-features = false, features = ["defmt", "no_std", "tls"] }
+embedded-tls = { version = "0.17", default-features = false, features = ["defmt"] }
 rand = { version = "0.9", default-features = false, features = ["std_rng"] }
 
 

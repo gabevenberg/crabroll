@@ -17,9 +17,10 @@ use embassy_net::dns::DnsQueryType;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{DhcpConfig, IpEndpoint, StackResources};
 use embassy_time::{Duration, Timer};
+use embedded_tls::{Aes128GcmSha256, NoVerify, TlsConfig, TlsConnection, TlsContext};
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
-use esp_hal::rng::Rng;
+use esp_hal::rng::{Rng, Trng};
 use esp_hal::timer::systimer::SystemTimer;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::uart::{Config, Uart};
@@ -124,6 +125,17 @@ async fn main(spawner: Spawner) {
     socket.connect(mqtt_endpoint).await.unwrap();
     info!("connected to endpoint");
 
+    //tcp
+    let config: TlsConfig<'_, Aes128GcmSha256> = TlsConfig::new()
+        .with_server_name(BROKER_HOST)
+        .enable_rsa_signatures();
+    let mut read_record_buffer = [0; 16640];
+    let mut write_record_buffer = [0; 16640];
+    let mut tls_connection: TlsConnection<'_, _, Aes128GcmSha256> =
+        TlsConnection::new(socket, &mut read_record_buffer, &mut write_record_buffer);
+    let mut trng = esp_hal::rng::Trng::new(peripherals.RNG, peripherals.ADC1);
+    tls_connection.open::<Trng, NoVerify>(TlsContext::new(&config, &mut trng)).await.unwrap();
+
     //mqtt connection.
     let mut config = ClientConfig::new(MqttVersion::MQTTv5, rng);
     config.max_packet_size = 100;
@@ -132,7 +144,7 @@ async fn main(spawner: Spawner) {
     let mut write_buffer = [0; 1024];
     let write_buffer_len = recv_buffer.len();
     let mut client = MqttClient::<_, 5, Rng>::new(
-        socket,
+        tls_connection,
         &mut write_buffer,
         write_buffer_len,
         &mut recv_buffer,

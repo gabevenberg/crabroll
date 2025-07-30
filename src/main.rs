@@ -17,10 +17,9 @@ use embassy_net::dns::DnsQueryType;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{DhcpConfig, IpEndpoint, StackResources};
 use embassy_time::{Duration, Timer};
-use embedded_tls::{Aes128GcmSha256, NoVerify, TlsConfig, TlsConnection, TlsContext};
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
-use esp_hal::rng::{Rng, Trng};
+use esp_hal::rng::Rng;
 use esp_hal::timer::systimer::SystemTimer;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::uart::{Config, Uart};
@@ -111,6 +110,8 @@ async fn main(spawner: Spawner) {
     }
     info!("got IP: {}", stack.config_v4().unwrap().address);
 
+    const BUFFER_SIZE:usize = 128;
+
     const BROKER_HOST: &str = "linuxgamingrig.local";
     // open tcp socket:
     let mqtt_broker_address = stack
@@ -119,32 +120,21 @@ async fn main(spawner: Spawner) {
         .unwrap();
     info!("broker adress is {}", mqtt_broker_address);
     let mqtt_endpoint = IpEndpoint::new(mqtt_broker_address[0], 1883);
-    let mut rx_buffer = [0; 1024];
-    let mut tx_buffer = [0; 1024];
+    let mut rx_buffer = [0; BUFFER_SIZE];
+    let mut tx_buffer = [0; BUFFER_SIZE];
     let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
     socket.connect(mqtt_endpoint).await.unwrap();
     info!("connected to endpoint");
 
-    //tcp
-    let config: TlsConfig<'_, Aes128GcmSha256> = TlsConfig::new()
-        .with_server_name(BROKER_HOST)
-        .enable_rsa_signatures();
-    let mut read_record_buffer = [0; 16640];
-    let mut write_record_buffer = [0; 16640];
-    let mut tls_connection: TlsConnection<'_, _, Aes128GcmSha256> =
-        TlsConnection::new(socket, &mut read_record_buffer, &mut write_record_buffer);
-    let mut trng = esp_hal::rng::Trng::new(peripherals.RNG, peripherals.ADC1);
-    tls_connection.open::<Trng, NoVerify>(TlsContext::new(&config, &mut trng)).await.unwrap();
-
     //mqtt connection.
     let mut config = ClientConfig::new(MqttVersion::MQTTv5, rng);
-    config.max_packet_size = 100;
-    let mut recv_buffer = [0; 1024];
+    config.max_packet_size = BUFFER_SIZE as u32;
+    let mut recv_buffer = [0; BUFFER_SIZE];
     let recv_buffer_len = recv_buffer.len();
-    let mut write_buffer = [0; 1024];
+    let mut write_buffer = [0; BUFFER_SIZE];
     let write_buffer_len = recv_buffer.len();
     let mut client = MqttClient::<_, 5, Rng>::new(
-        tls_connection,
+        socket,
         &mut write_buffer,
         write_buffer_len,
         &mut recv_buffer,
@@ -154,11 +144,11 @@ async fn main(spawner: Spawner) {
     client.connect_to_broker().await.unwrap();
     info!("connected to mqtt!");
     loop {
-        Timer::after(Duration::from_secs(30)).await;
-        match client.send_ping().await {
-            Ok(_) => continue,
+        match client.send_message("ping", b"pong", rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS0, true).await {
+            Ok(_) => info!("sent ping"),
             Err(e) => error!("mqtt error: {}", e),
         };
+        Timer::after(Duration::from_secs(30)).await;
     }
 }
 

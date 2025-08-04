@@ -1,0 +1,1 @@
+A rust-based roller blind firmware compatible with [home assistant](https://www.home-assistant.io/) via the home assistant [MQTT cover](https://www.home-assistant.io/integrations/cover.mqtt/) integration.

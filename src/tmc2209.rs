@@ -89,8 +89,7 @@ impl<U: Read + Write + ErrorType> Tmc2209<U> {
         register: u8,
     ) -> Result<u32, UartError<U::Error>> {
         const REPLY_BYTES: [u8; 2] = [0x05, 0xff];
-        self
-            .uart
+        self.uart
             .write_all(&Self::construct_read_uart_message(slave_address, register))
             .await
             .map_err(UartError::TxError)?;

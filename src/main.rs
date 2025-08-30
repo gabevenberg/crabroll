@@ -13,20 +13,21 @@ mod wifi;
 use defmt::{error, info};
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_net::dns::DnsQueryType;
-use embassy_net::tcp::TcpSocket;
-use embassy_net::{DhcpConfig, IpEndpoint, StackResources};
+use embassy_net::{DhcpConfig, IpEndpoint, StackResources, dns::DnsQueryType, tcp::TcpSocket};
 use embassy_time::{Duration, Timer};
-use esp_hal::clock::CpuClock;
-use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
-use esp_hal::rng::Rng;
-use esp_hal::timer::systimer::SystemTimer;
-use esp_hal::timer::timg::TimerGroup;
-use esp_hal::uart::{Config, Uart};
+use esp_hal::{
+    clock::CpuClock,
+    gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
+    rng::Rng,
+    timer::{systimer::SystemTimer, timg::TimerGroup},
+    uart::{Config, Uart},
+};
 use esp_wifi::EspWifiController;
 use panic_rtt_target as _;
-use rust_mqtt::client::client::MqttClient;
-use rust_mqtt::client::client_config::{ClientConfig, MqttVersion};
+use rust_mqtt::client::{
+    client::MqttClient,
+    client_config::{ClientConfig, MqttVersion},
+};
 use static_cell::StaticCell;
 use tmc2209::Tmc2209;
 use wifi::{connection, network_task};
@@ -110,14 +111,11 @@ async fn main(spawner: Spawner) {
     }
     info!("got IP: {}", stack.config_v4().unwrap().address);
 
-    const BUFFER_SIZE:usize = 128;
+    const BUFFER_SIZE: usize = 128;
 
     const BROKER_HOST: &str = "linuxgamingrig.local";
     // open tcp socket:
-    let mqtt_broker_address = stack
-        .dns_query(BROKER_HOST, DnsQueryType::A)
-        .await
-        .unwrap();
+    let mqtt_broker_address = stack.dns_query(BROKER_HOST, DnsQueryType::A).await.unwrap();
     info!("broker adress is {}", mqtt_broker_address);
     let mqtt_endpoint = IpEndpoint::new(mqtt_broker_address[0], 1883);
     let mut rx_buffer = [0; BUFFER_SIZE];
@@ -144,7 +142,15 @@ async fn main(spawner: Spawner) {
     client.connect_to_broker().await.unwrap();
     info!("connected to mqtt!");
     loop {
-        match client.send_message("ping", b"pong", rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS0, true).await {
+        match client
+            .send_message(
+                "ping",
+                b"pong",
+                rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS0,
+                true,
+            )
+            .await
+        {
             Ok(_) => info!("sent ping"),
             Err(e) => error!("mqtt error: {}", e),
         };

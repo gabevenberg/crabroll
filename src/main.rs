@@ -8,6 +8,7 @@
 #![allow(clippy::unusual_byte_groupings)]
 
 mod tmc2209;
+pub mod stepper;
 
 use defmt::info;
 use defmt_rtt as _;

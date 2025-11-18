@@ -1,3 +1,5 @@
+#![no_std]
+
 use core::{iter::FusedIterator, num::NonZeroU32};
 
 use defmt::Format;

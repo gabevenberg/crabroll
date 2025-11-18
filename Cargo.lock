@@ -143,6 +143,7 @@ dependencies = [
  "esp-hal",
  "esp-rtos",
  "heapless",
+ "iter-step-gen",
  "panic-rtt-target",
  "static_cell",
  "thiserror",
@@ -983,6 +984,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "iter-step-gen"
+version = "0.1.0"
+dependencies = [
+ "defmt 1.0.1",
+ "embassy-time",
+ "thiserror",
 ]
 
 [[package]]

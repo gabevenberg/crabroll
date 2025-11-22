@@ -1,4 +1,4 @@
-#![no_std]
+// #![cfg_attr(not(test), no_std)]
 
 use core::{iter::FusedIterator, num::NonZeroU32};
 
@@ -6,7 +6,7 @@ use defmt::Format;
 use embassy_time::{Duration, TICK_HZ};
 use thiserror::Error;
 
-#[derive(Format, Debug, Clone, Copy, Error)]
+#[derive(Format, Debug, Clone, Copy, Error, PartialEq, Eq)]
 pub enum StepperError {
     #[error("Attempted move out of bounds")]
     MoveOutOfBounds,
@@ -29,9 +29,6 @@ impl Direction {
     }
 }
 
-// a trapezoidal stepper planner that implements the algorithm described
-// [here](http://hwml.com/LeibRamp.pdf), modified for use with integer math.
-
 ///Trapezoidal stepper planner.
 ///Does not move anything on its own,
 ///but allows you to construct 'step plans', which are iterators over Durations.
@@ -49,14 +46,10 @@ pub struct Stepper {
     // Direction to home in.
     dir_to_home: Direction,
     curent_pos: Option<u32>,
-    // precomputed delay between steps 1 and 2.
-    inital_delay: u64,
     // precomputed maximum stopping distance
     max_stopping_distance: u32,
     // delay between steps when at max speed.
     cruise_delay: Duration,
-    // inverse of (R) from the paper.
-    accel_divisor: u64,
 }
 
 impl Stepper {
@@ -66,7 +59,7 @@ impl Stepper {
     ///max_speed: max steps/sec the stepper motor can safely rotate.
     ///max_accel: max steps/sec^2 the stepper motor can achieve.
     ///dir_to_home: the direction the motor spins when moving towards home.
-    pub fn new(
+    pub const fn new(
         travel_limit: NonZeroU32,
         max_speed: NonZeroU32,
         max_accel: NonZeroU32,
@@ -80,21 +73,11 @@ impl Stepper {
             start_vel,
             dir_to_home,
             curent_pos: None,
-            inital_delay: Self::compute_inital_delay(start_vel, max_accel),
             max_stopping_distance: Self::compute_max_stopping_distance(
                 max_speed, start_vel, max_accel,
             ),
             cruise_delay: Self::compute_cruise_delay(max_speed),
-            accel_divisor: Self::compute_accel_devisor(max_accel),
         }
-    }
-
-    const fn compute_accel_devisor(max_accel: NonZeroU32) -> u64 {
-        (TICK_HZ ^ 2) / max_accel.get() as u64
-    }
-
-    const fn compute_inital_delay(start_vel: u32, max_accel: NonZeroU32) -> u64 {
-        TICK_HZ / ((start_vel as u64 ^ 2) + 2 * max_accel.get() as u64).isqrt()
     }
 
     const fn compute_max_stopping_distance(
@@ -102,7 +85,7 @@ impl Stepper {
         start_vel: u32,
         max_accel: NonZeroU32,
     ) -> u32 {
-        ((max_speed.get() ^ 2) - (start_vel ^ 2)) / (2 * max_accel.get())
+        (max_speed.get().saturating_pow(2) - start_vel.saturating_pow(2)) / (2 * max_accel.get())
     }
 
     const fn compute_cruise_delay(max_speed: NonZeroU32) -> Duration {
@@ -113,7 +96,7 @@ impl Stepper {
         &'a mut self,
         endstop_fn: F,
     ) -> (HomingMove<'a, F>, Direction) {
-        let delay = Duration::from_ticks(self.inital_delay);
+        let delay = Duration::from_ticks(TICK_HZ / (self.start_vel as u64));
         let dir = self.dir_to_home;
         (
             HomingMove {
@@ -153,7 +136,7 @@ impl Stepper {
                         stepper: self,
                         phase: Phase::Accelerate,
                         stopping_distance,
-                        prev_delay: Duration::MIN,
+                        prev_delay: Duration::MAX,
                         steps_to_travel: move_distance,
                         dir,
                     },
@@ -170,7 +153,7 @@ impl Stepper {
     ) -> Result<(ContinuousJog<'a, F>, Direction), StepperError> {
         match self.curent_pos {
             Some(_) => {
-                let delay = Duration::from_ticks(self.inital_delay);
+                let delay = Duration::from_ticks(TICK_HZ / (self.start_vel as u64));
                 Ok((
                     ContinuousJog {
                         stepper: self,
@@ -216,10 +199,8 @@ impl Stepper {
     /// Sets the max accel of this [`Stepper`] in steps/sec^2.
     pub fn set_max_accel(&mut self, max_accel: NonZeroU32) {
         self.max_accel = max_accel;
-        self.inital_delay = Self::compute_inital_delay(self.start_vel, max_accel);
         self.max_stopping_distance =
             Self::compute_max_stopping_distance(self.max_speed, self.start_vel, max_accel);
-        self.accel_divisor = Self::compute_accel_devisor(max_accel);
     }
 
     /// Returns the start vel of this [`Stepper`] in steps/sec.
@@ -230,7 +211,6 @@ impl Stepper {
     /// Sets the start vel of this [`Stepper`] in steps/sec.
     pub fn set_start_vel(&mut self, start_vel: u32) {
         self.start_vel = start_vel;
-        self.inital_delay = Self::compute_inital_delay(start_vel, self.max_accel);
         self.max_stopping_distance =
             Self::compute_max_stopping_distance(self.max_speed, start_vel, self.max_accel);
     }
@@ -328,15 +308,7 @@ impl<'a> Iterator for PlannedMove<'a> {
                 };
 
                 let p = self.prev_delay.as_ticks();
-                //TODO: not sure if this is right. Im dividing P instead of negating R, and im
-                //dividing p^2 by the inverse of R rather than multiplying by R.
-                self.prev_delay = Duration::from_ticks(
-                    self.stepper.cruise_delay.as_ticks().min(
-                        self.stepper
-                            .inital_delay
-                            .max(p / (1 + (p ^ 2) / self.stepper.accel_divisor)),
-                    ),
-                );
+                self.prev_delay = Duration::from_ticks(todo!());
 
                 if self.prev_delay == self.stepper.cruise_delay {
                     self.phase = Phase::Cruise
@@ -361,15 +333,7 @@ impl<'a> Iterator for PlannedMove<'a> {
                 self.stepper.update_pos_one_step(self.dir);
 
                 let p = self.prev_delay.as_ticks();
-                //TODO: not sure if this is right. Im dividing p^2 by the inverse of R rather than
-                //multiplying by R.
-                self.prev_delay = Duration::from_ticks(
-                    self.stepper.cruise_delay.as_ticks().min(
-                        self.stepper
-                            .inital_delay
-                            .max(p * (1 + (p ^ 2) / self.stepper.accel_divisor)),
-                    ),
-                );
+                self.prev_delay = Duration::from_ticks(todo!());
                 Some(self.prev_delay)
             }
         }
@@ -398,6 +362,95 @@ impl<'a, F: FnMut() -> bool> Iterator for ContinuousJog<'a, F> {
                 Some(self.delay)
             }
             false => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use core::num::NonZeroU32;
+
+    use embassy_time::{Duration, TICK_HZ};
+
+    use crate::{Direction, Stepper, StepperError};
+
+    static TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(255).unwrap();
+    static MAX_VEL: NonZeroU32 = NonZeroU32::new(255).unwrap();
+    static MAX_ACCEL: NonZeroU32 = NonZeroU32::new(255).unwrap();
+    static START_VEL: u32 = 50;
+    static DIR: Direction = Direction::Cw;
+
+    #[test]
+    fn test_home() {
+        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL, DIR);
+        assert_eq!(stepper.curent_pos, None);
+
+        let mut endstop = [false, false, true].into_iter();
+        let (steps, direction) = stepper.homing_move(|| endstop.next().unwrap());
+
+        assert_eq!(direction, DIR);
+        for step in steps {
+            assert_eq!(step, Duration::from_hz(START_VEL as u64));
+            println!("{}", (TICK_HZ / step.as_ticks()));
+        }
+        assert_eq!(stepper.curent_pos, Some(0));
+    }
+
+    #[test]
+    fn test_move_travel_guards() {
+        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL, DIR);
+        assert_eq!(
+            stepper.planned_move(100).unwrap_err(),
+            StepperError::NotHomed
+        );
+        let (mut steps, _) = stepper.homing_move(|| true);
+        steps.next();
+        assert_eq!(
+            stepper.planned_move(TRAVEL_LIMIT.get() + 1).unwrap_err(),
+            StepperError::MoveOutOfBounds
+        );
+    }
+
+    #[test]
+    fn test_move_max_vel() {
+        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL, DIR);
+        let (mut steps, _) = stepper.homing_move(|| true);
+        steps.next();
+        dbg!(&stepper);
+
+        let (steps, _) = stepper.planned_move(TRAVEL_LIMIT.get()).unwrap();
+        for step in steps {
+            println!("Speed: {}, delay: {:?}", (TICK_HZ / step.as_ticks()), step);
+            assert!(step >= Duration::from_hz(MAX_VEL.get().into()));
+        }
+
+        assert_eq!(stepper.curent_pos, Some(TRAVEL_LIMIT.get()));
+    }
+
+    #[test]
+    fn test_move_max_accel() {
+        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL, DIR);
+        let (mut steps, _) = stepper.homing_move(|| true);
+        steps.next();
+        dbg!(&stepper);
+
+        let mut prev_step = TICK_HZ / (stepper.start_vel as u64);
+
+        let (steps, _) = stepper.planned_move(TRAVEL_LIMIT.get()).unwrap();
+        for step in steps {
+            let target_delay =
+                TICK_HZ / ((TICK_HZ / prev_step).pow(2) + 2 * MAX_ACCEL.get() as u64).isqrt();
+
+            let error = step.as_ticks().abs_diff(target_delay) as f64 / target_delay as f64;
+
+            println!(
+                "target: {}, actual: {}, error: {}",
+                target_delay, step, error
+            );
+
+            assert!(error < 0.1);
+
+            prev_step = target_delay;
         }
     }
 }

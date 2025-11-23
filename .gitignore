@@ -11,3 +11,6 @@ target/
 
 #direnv caching
 .direnv/
+
+#some documentation is in typst, dont need to store the pdf output.
+*.pdf

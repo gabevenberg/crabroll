@@ -1,6 +1,7 @@
 // #![cfg_attr(not(test), no_std)]
 
 use core::{iter::FusedIterator, num::NonZeroU32};
+use std::cmp::{max, min};
 
 use defmt::Format;
 use embassy_time::{Duration, TICK_HZ};
@@ -29,6 +30,10 @@ impl Direction {
     }
 }
 
+// a trapezoidal stepper planner that implements the algorithm described
+// [here](http://hwml.com/LeibRamp.pdf), heavily modified for use with integer math.
+// the modifications are explained in the math.typ file in this package.
+
 ///Trapezoidal stepper planner.
 ///Does not move anything on its own,
 ///but allows you to construct 'step plans', which are iterators over Durations.
@@ -50,6 +55,10 @@ pub struct Stepper {
     max_stopping_distance: u32,
     // delay between steps when at max speed.
     cruise_delay: Duration,
+    // precomputed divisor for acceleration calcs.
+    accel_divisor: u64,
+    // precomputed delay of the first step
+    inital_delay: u64,
 }
 
 impl Stepper {
@@ -77,7 +86,17 @@ impl Stepper {
                 max_speed, start_vel, max_accel,
             ),
             cruise_delay: Self::compute_cruise_delay(max_speed),
+            accel_divisor: Self::compute_accel_divisor(max_accel),
+            inital_delay: Self::compute_inital_delay(start_vel, max_accel),
         }
+    }
+
+    const fn compute_accel_divisor(max_accel: NonZeroU32) -> u64 {
+        (TICK_HZ.pow(2)) / max_accel.get() as u64
+    }
+
+    const fn compute_inital_delay(start_vel: u32, max_accel: NonZeroU32) -> u64 {
+        TICK_HZ / ((start_vel as u64).pow(2) + 2 * max_accel.get() as u64).isqrt()
     }
 
     const fn compute_max_stopping_distance(
@@ -201,6 +220,8 @@ impl Stepper {
         self.max_accel = max_accel;
         self.max_stopping_distance =
             Self::compute_max_stopping_distance(self.max_speed, self.start_vel, max_accel);
+        self.accel_divisor = Self::compute_accel_divisor(max_accel);
+        self.inital_delay = Self::compute_inital_delay(self.start_vel, max_accel);
     }
 
     /// Returns the start vel of this [`Stepper`] in steps/sec.
@@ -213,6 +234,7 @@ impl Stepper {
         self.start_vel = start_vel;
         self.max_stopping_distance =
             Self::compute_max_stopping_distance(self.max_speed, start_vel, self.max_accel);
+        self.inital_delay = Self::compute_inital_delay(start_vel, self.max_accel);
     }
 
     /// Returns the dir to home of this [`Stepper`].
@@ -308,7 +330,13 @@ impl<'a> Iterator for PlannedMove<'a> {
                 };
 
                 let p = self.prev_delay.as_ticks();
-                self.prev_delay = Duration::from_ticks(todo!());
+                self.prev_delay = Duration::from_ticks(min(
+                    max(
+                        p.saturating_sub(p.saturating_pow(3) / self.stepper.accel_divisor),
+                        self.stepper.cruise_delay.as_ticks(),
+                    ),
+                    self.stepper.inital_delay,
+                ));
 
                 if self.prev_delay == self.stepper.cruise_delay {
                     self.phase = Phase::Cruise
@@ -333,7 +361,13 @@ impl<'a> Iterator for PlannedMove<'a> {
                 self.stepper.update_pos_one_step(self.dir);
 
                 let p = self.prev_delay.as_ticks();
-                self.prev_delay = Duration::from_ticks(todo!());
+                self.prev_delay = Duration::from_ticks(min(
+                    max(
+                        p.saturating_add(p.saturating_pow(3) / self.stepper.accel_divisor),
+                        self.stepper.cruise_delay.as_ticks(),
+                    ),
+                    self.stepper.inital_delay,
+                ));
                 Some(self.prev_delay)
             }
         }

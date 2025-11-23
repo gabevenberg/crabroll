@@ -4,7 +4,7 @@ The paper http://hwml.com/LeibRamp.pdf by Aryeh Eiderman submits an efficient al
 leaving only multiplication and addition in the real-time loop.
 However, Eidermans paper is explicitly designed for floating point arithmetic,
 and does not work for integer arithmetic.
-Eiderman notes that was originally designed for an IBM PC, which may have had a floating point coprocessor
+Eiderman notes that was originally designed for an IBM PC, which may have had a floating point coprocessor.
 However, today, most stepper motors are controlled by microcontrollers, not full x86 machines.
 Most microcontrollers do not have a floating point unit,
 and so here we investigate a modification to allow Eidermans algorithm to work with integer arithmetic.
@@ -47,5 +47,24 @@ We can use this to distribute $p$, causing the intermediate calculations to avoi
 $ p=p+p^3/m^(-1) $
 
 Finally, if we are also using unsigned integers, during acceleration we can, instead of negating $m^(-1)$,
-we can subtract $p$ from $p^3/m^(-1)$:
-$ p=p-p^3/m^(-1) $
+we can subtract $p$ from $p^3/m^(-1)$, making the update function:
+$ p=p plus.minus p^3/m^(-1) $
+
+== modifying the optional enhancement
+
+Eiderman posits an optional precision enhancement using a couple extra computations to increase the accuracy of the algorithm:
+$ q = m dot p^2 $
+in
+$ p=p dot (1+q+q^2) $
+
+We can apply similar transformations to this. As we have already calculated $m^(-1)$, we can redefine $q$ as:
+$ q=p^2/m^(-1) $
+
+and distribute $p$:
+$ p=p plus.minus p q + p q^2 $
+
+Unfortunately, $q$ is also very close to 0, so we instead calculate the inverse,
+$q^(-1) = m^(-1)/p^2$.
+
+and divide rather than multiply:
+$ p=p plus.minus p/q + p/q^2 $

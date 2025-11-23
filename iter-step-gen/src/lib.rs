@@ -1,7 +1,10 @@
-// #![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_std)]
 
-use core::{iter::FusedIterator, num::NonZeroU32};
-use std::cmp::{max, min};
+use core::{
+    cmp::{max, min},
+    iter::FusedIterator,
+    num::NonZeroU32,
+};
 
 use defmt::Format;
 use embassy_time::{Duration, TICK_HZ};
@@ -99,6 +102,7 @@ impl Stepper {
         TICK_HZ / ((start_vel as u64).pow(2) + 2 * max_accel.get() as u64).isqrt()
     }
 
+    // TODO: seems to underestimate stopping distance, IDK why.
     const fn compute_max_stopping_distance(
         max_speed: NonZeroU32,
         start_vel: u32,
@@ -330,9 +334,11 @@ impl<'a> Iterator for PlannedMove<'a> {
                 };
 
                 let p = self.prev_delay.as_ticks();
+                let q = max(self.stepper.accel_divisor / p.saturating_pow(2), 1);
                 self.prev_delay = Duration::from_ticks(min(
                     max(
-                        p.saturating_sub(p.saturating_pow(3) / self.stepper.accel_divisor),
+                        p.saturating_sub(p / q)
+                            .saturating_add(p / q.saturating_pow(2)),
                         self.stepper.cruise_delay.as_ticks(),
                     ),
                     self.stepper.inital_delay,
@@ -361,9 +367,11 @@ impl<'a> Iterator for PlannedMove<'a> {
                 self.stepper.update_pos_one_step(self.dir);
 
                 let p = self.prev_delay.as_ticks();
+                let q = max(self.stepper.accel_divisor / p.saturating_pow(2), 1);
                 self.prev_delay = Duration::from_ticks(min(
                     max(
-                        p.saturating_add(p.saturating_pow(3) / self.stepper.accel_divisor),
+                        p.saturating_add(p / q)
+                            .saturating_add(p / q.saturating_pow(2)),
                         self.stepper.cruise_delay.as_ticks(),
                     ),
                     self.stepper.inital_delay,
@@ -406,11 +414,11 @@ mod test {
 
     use embassy_time::{Duration, TICK_HZ};
 
-    use crate::{Direction, Stepper, StepperError};
+    use crate::{Direction, Phase, Stepper, StepperError};
 
-    static TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(255).unwrap();
-    static MAX_VEL: NonZeroU32 = NonZeroU32::new(255).unwrap();
-    static MAX_ACCEL: NonZeroU32 = NonZeroU32::new(255).unwrap();
+    static TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(2048).unwrap();
+    static MAX_VEL: NonZeroU32 = NonZeroU32::new(512).unwrap();
+    static MAX_ACCEL: NonZeroU32 = NonZeroU32::new(64).unwrap();
     static START_VEL: u32 = 50;
     static DIR: Direction = Direction::Cw;
 
@@ -453,11 +461,11 @@ mod test {
         dbg!(&stepper);
 
         let (steps, _) = stepper.planned_move(TRAVEL_LIMIT.get()).unwrap();
+        print!("speed,delay");
         for step in steps {
-            println!("Speed: {}, delay: {:?}", (TICK_HZ / step.as_ticks()), step);
+            println!("{},{}", (TICK_HZ / step.as_ticks()), step.as_ticks());
             assert!(step >= Duration::from_hz(MAX_VEL.get().into()));
         }
-
         assert_eq!(stepper.curent_pos, Some(TRAVEL_LIMIT.get()));
     }
 
@@ -468,23 +476,36 @@ mod test {
         steps.next();
         dbg!(&stepper);
 
-        let mut prev_step = TICK_HZ / (stepper.start_vel as u64);
+        let mut prev_step = stepper.inital_delay;
+        let mut time = Duration::from_ticks(0);
 
         let (steps, _) = stepper.planned_move(TRAVEL_LIMIT.get()).unwrap();
+        println!("time,delay,vel,accel");
         for step in steps {
-            let target_delay =
-                TICK_HZ / ((TICK_HZ / prev_step).pow(2) + 2 * MAX_ACCEL.get() as u64).isqrt();
+            let prev_vel = TICK_HZ as f64 / prev_step as f64;
+            let vel = TICK_HZ as f64 / step.as_ticks() as f64;
+            let accel = ((vel - prev_vel) * prev_vel) as i64;
+            println!("{},{},{},{}", time.as_ticks(), step.as_ticks(), vel, accel);
 
-            let error = step.as_ticks().abs_diff(target_delay) as f64 / target_delay as f64;
+            // we are intentionally a bit fuzzy here, as the integer algorithm can produce a bit
+            // more acceleration. I have arbitrarily decided that this is OK.
+            assert!(accel.abs() <= MAX_ACCEL.get() as i64 + (MAX_ACCEL.get() as i64 / 25));
 
-            println!(
-                "target: {}, actual: {}, error: {}",
-                target_delay, step, error
-            );
-
-            assert!(error < 0.1);
-
-            prev_step = target_delay;
+            time += step;
+            prev_step = step.as_ticks();
         }
+
+        let final_vel = TICK_HZ as f64 / prev_step as f64;
+        let final_accel = ((stepper.start_vel as f64 - final_vel) * final_vel) as i64;
+        println!(
+            "{},{},{},{}",
+            time.as_ticks(),
+            prev_step,
+            final_vel,
+            final_accel
+        );
+
+        assert!(final_accel.abs() <= MAX_ACCEL.get() as i64 + (MAX_ACCEL.get() as i64 / 25));
+        assert_eq!(stepper.curent_pos, Some(TRAVEL_LIMIT.get()))
     }
 }

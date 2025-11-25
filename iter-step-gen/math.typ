@@ -50,7 +50,7 @@ Finally, if we are also using unsigned integers, during acceleration we can, ins
 we can subtract $p$ from $p^3/m^(-1)$, making the update function:
 $ p=p plus.minus p^3/m^(-1) $
 
-== modifying the optional enhancement
+= Modifying the optional enhancement
 
 Eiderman posits an optional precision enhancement using a couple extra computations to increase the accuracy of the algorithm:
 $ q = m dot p^2 $

@@ -1,4 +1,4 @@
-#![cfg_attr(not(test), no_std)]
+// #![cfg_attr(not(test), no_std)]
 
 use core::{
     cmp::{max, min},
@@ -95,20 +95,19 @@ impl Stepper {
     }
 
     const fn compute_accel_divisor(max_accel: NonZeroU32) -> u64 {
-        (TICK_HZ.pow(2)) / max_accel.get() as u64
+        TICK_HZ.pow(2) / max_accel.get() as u64
     }
 
     const fn compute_inital_delay(start_vel: u32, max_accel: NonZeroU32) -> u64 {
         TICK_HZ / ((start_vel as u64).pow(2) + 2 * max_accel.get() as u64).isqrt()
     }
 
-    // TODO: seems to underestimate stopping distance, IDK why.
     const fn compute_max_stopping_distance(
         max_speed: NonZeroU32,
         start_vel: u32,
         max_accel: NonZeroU32,
     ) -> u32 {
-        (max_speed.get().saturating_pow(2) - start_vel.saturating_pow(2)) / (2 * max_accel.get())
+        (max_speed.get().saturating_pow(2).saturating_sub(start_vel.saturating_pow(2))) / (2 * max_accel.get())
     }
 
     const fn compute_cruise_delay(max_speed: NonZeroU32) -> Duration {
@@ -162,6 +161,9 @@ impl Stepper {
                         prev_delay: Duration::MAX,
                         steps_to_travel: move_distance,
                         dir,
+                        rem1: 0,
+                        rem2: 0,
+                        rem3: 0,
                     },
                     dir,
                 ))
@@ -313,6 +315,9 @@ pub struct PlannedMove<'a> {
     dir: Direction,
     stopping_distance: u32,
     steps_to_travel: u32,
+    rem1: u64,
+    rem2: u64,
+    rem3: u64,
 }
 
 impl<'a> FusedIterator for PlannedMove<'a> {}
@@ -320,6 +325,7 @@ impl<'a> FusedIterator for PlannedMove<'a> {}
 impl<'a> Iterator for PlannedMove<'a> {
     type Item = Duration;
 
+    // TODO: For some reason the acceleration curve is asymetrical?
     fn next(&mut self) -> Option<Self::Item> {
         match self.phase {
             Phase::Accelerate => {
@@ -329,20 +335,29 @@ impl<'a> Iterator for PlannedMove<'a> {
 
                 self.steps_to_travel -= 1;
                 self.stepper.update_pos_one_step(self.dir);
-                if self.steps_to_travel < self.stopping_distance {
+                if self.steps_to_travel <= self.stopping_distance {
                     self.phase = Phase::Decelerate;
+                    self.rem1 = 0;
+                    self.rem2 = 0;
+                    self.rem3 = 0;
                 };
 
                 let p = self.prev_delay.as_ticks();
-                let q = max(self.stepper.accel_divisor / p.saturating_pow(2), 1);
+                let psq = p.saturating_pow(2);
+                let q = max((self.stepper.accel_divisor + self.rem1) / psq, 1);
+                self.rem1 = (self.stepper.accel_divisor + self.rem1) % psq;
+                let qsq = q.saturating_pow(2);
+                // dbg!(p, psq, q, qsq, self.rem1, self.rem2, self.rem3);
                 self.prev_delay = Duration::from_ticks(min(
                     max(
-                        p.saturating_sub(p / q)
-                            .saturating_add(p / q.saturating_pow(2)),
+                        p.saturating_sub((p + self.rem2) / q)
+                            .saturating_add((p + self.rem3) / qsq),
                         self.stepper.cruise_delay.as_ticks(),
                     ),
                     self.stepper.inital_delay,
                 ));
+                self.rem2 = (p.saturating_add(self.rem2)) % q;
+                self.rem3 = (p.saturating_add(self.rem3)) % qsq;
 
                 if self.prev_delay == self.stepper.cruise_delay {
                     self.phase = Phase::Cruise
@@ -353,8 +368,11 @@ impl<'a> Iterator for PlannedMove<'a> {
             Phase::Cruise => {
                 self.steps_to_travel -= 1;
                 self.stepper.update_pos_one_step(self.dir);
-                if self.steps_to_travel < self.stopping_distance {
+                if self.steps_to_travel <= self.stopping_distance {
                     self.phase = Phase::Decelerate;
+                    self.rem1 = 0;
+                    self.rem2 = 0;
+                    self.rem3 = 0;
                 };
                 Some(self.prev_delay)
             }
@@ -367,15 +385,21 @@ impl<'a> Iterator for PlannedMove<'a> {
                 self.stepper.update_pos_one_step(self.dir);
 
                 let p = self.prev_delay.as_ticks();
-                let q = max(self.stepper.accel_divisor / p.saturating_pow(2), 1);
+                let psq = p.saturating_pow(2);
+                let q = max((self.stepper.accel_divisor + self.rem1) / psq, 1);
+                self.rem1 = (self.stepper.accel_divisor + self.rem1) % psq;
+                let qsq = q.saturating_pow(2);
+                // dbg!(p, psq, q, qsq, self.rem1, self.rem2, self.rem3);
                 self.prev_delay = Duration::from_ticks(min(
                     max(
-                        p.saturating_add(p / q)
-                            .saturating_add(p / q.saturating_pow(2)),
+                        p.saturating_add((p + self.rem2) / q)
+                            .saturating_add((p + self.rem3) / qsq),
                         self.stepper.cruise_delay.as_ticks(),
                     ),
                     self.stepper.inital_delay,
                 ));
+                self.rem2 = (p.saturating_add(self.rem2)) % q;
+                self.rem3 = (p.saturating_add(self.rem3)) % qsq;
                 Some(self.prev_delay)
             }
         }
@@ -414,13 +438,13 @@ mod test {
 
     use embassy_time::{Duration, TICK_HZ};
 
-    use crate::{Direction, Phase, Stepper, StepperError};
+    use crate::{Direction, Stepper, StepperError};
 
-    static TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(2048).unwrap();
-    static MAX_VEL: NonZeroU32 = NonZeroU32::new(512).unwrap();
-    static MAX_ACCEL: NonZeroU32 = NonZeroU32::new(64).unwrap();
-    static START_VEL: u32 = 50;
-    static DIR: Direction = Direction::Cw;
+    const TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(1024).unwrap();
+    const MAX_VEL: NonZeroU32 = NonZeroU32::new(255).unwrap();
+    const MAX_ACCEL: NonZeroU32 = NonZeroU32::new(64).unwrap();
+    const START_VEL: u32 = 50;
+    const DIR: Direction = Direction::Cw;
 
     #[test]
     fn test_home() {
@@ -484,28 +508,27 @@ mod test {
         for step in steps {
             let prev_vel = TICK_HZ as f64 / prev_step as f64;
             let vel = TICK_HZ as f64 / step.as_ticks() as f64;
-            let accel = ((vel - prev_vel) * prev_vel) as i64;
+            let accel = ((vel - prev_vel) * prev_vel);
             println!("{},{},{},{}", time.as_ticks(), step.as_ticks(), vel, accel);
 
-            // we are intentionally a bit fuzzy here, as the integer algorithm can produce a bit
-            // more acceleration. I have arbitrarily decided that this is OK.
-            assert!(accel.abs() <= MAX_ACCEL.get() as i64 + (MAX_ACCEL.get() as i64 / 25));
+            assert!(accel.abs() <= MAX_ACCEL.get() as f64+1.0);
 
             time += step;
             prev_step = step.as_ticks();
         }
 
         let final_vel = TICK_HZ as f64 / prev_step as f64;
-        let final_accel = ((stepper.start_vel as f64 - final_vel) * final_vel) as i64;
+        let final_accel = ((stepper.start_vel as f64 - final_vel) * final_vel);
         println!(
             "{},{},{},{}",
             time.as_ticks(),
             prev_step,
-            final_vel,
+            stepper.start_vel,
             final_accel
         );
 
-        assert!(final_accel.abs() <= MAX_ACCEL.get() as i64 + (MAX_ACCEL.get() as i64 / 25));
-        assert_eq!(stepper.curent_pos, Some(TRAVEL_LIMIT.get()))
+        assert!(final_accel.abs() <= MAX_ACCEL.get() as f64 + 1.0);
+        assert_eq!(stepper.curent_pos, Some(TRAVEL_LIMIT.get()));
+        todo!()
     }
 }

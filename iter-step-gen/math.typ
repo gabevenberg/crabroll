@@ -15,11 +15,13 @@ Eidermans update formula is as follows:
 $ p = p dot (1 + m dot p^2) $
 Where:
 $ p = "the delay between steps" $
-$ m = cases(
-  -a/F^2 "if accelerating",
-  0 "if cruising",
-  a/F^2 "if decelerating",
-) $
+$
+  m = cases(
+    -a/F^2 "if accelerating",
+    0 "if cruising",
+    a/F^2 "if decelerating",
+  )
+$
 $ F = "the tick frequency" $
 $ a = "the acceleration in steps/sec"^2 $
 
@@ -50,12 +52,19 @@ Finally, if we are also using unsigned integers, during acceleration we can, ins
 we can subtract $p$ from $p^3/m^(-1)$, making the update function:
 $ p=p plus.minus p^3/m^(-1) $
 
+= Remainder storage
+
+Unfortunately, the flooring after every division inherent in integer arithmetic reduces precision significantly,
+and causes the acceleration curve to be asymmetrical with respect to the deceleration curve.
+This can be fixed, however, by storing the remainder of each division and adding that remainder to the next iteration.
+$ p=p plus.minus (p^3 + r)/m^(-1) $
+$ r=(p^3 + r) mod m^(-1) $
+
 = Modifying the optional enhancement
 
 Eiderman posits an optional precision enhancement using a couple extra computations to increase the accuracy of the algorithm:
-$ q = m dot p^2 $
-in
 $ p=p dot (1+q+q^2) $
+where $q = m dot p^2$.
 
 We can apply similar transformations to this. As we have already calculated $m^(-1)$, we can redefine $q$ as:
 $ q=p^2/m^(-1) $
@@ -68,3 +77,5 @@ $q^(-1) = m^(-1)/p^2$.
 
 and divide rather than multiply:
 $ p=p plus.minus p/q + p/q^2 $
+
+Applying remainder storage to this enhancement is left as an exercise to the reader.

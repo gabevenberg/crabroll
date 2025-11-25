@@ -1,4 +1,4 @@
-// #![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_std)]
 
 use core::{
     cmp::{max, min},
@@ -107,7 +107,11 @@ impl Stepper {
         start_vel: u32,
         max_accel: NonZeroU32,
     ) -> u32 {
-        (max_speed.get().saturating_pow(2).saturating_sub(start_vel.saturating_pow(2))) / (2 * max_accel.get())
+        (max_speed
+            .get()
+            .saturating_pow(2)
+            .saturating_sub(start_vel.saturating_pow(2)))
+            / (2 * max_accel.get())
     }
 
     const fn compute_cruise_delay(max_speed: NonZeroU32) -> Duration {
@@ -161,9 +165,7 @@ impl Stepper {
                         prev_delay: Duration::MAX,
                         steps_to_travel: move_distance,
                         dir,
-                        rem1: 0,
-                        rem2: 0,
-                        rem3: 0,
+                        rem: 0,
                     },
                     dir,
                 ))
@@ -315,9 +317,7 @@ pub struct PlannedMove<'a> {
     dir: Direction,
     stopping_distance: u32,
     steps_to_travel: u32,
-    rem1: u64,
-    rem2: u64,
-    rem3: u64,
+    rem: u64,
 }
 
 impl<'a> FusedIterator for PlannedMove<'a> {}
@@ -337,27 +337,19 @@ impl<'a> Iterator for PlannedMove<'a> {
                 self.stepper.update_pos_one_step(self.dir);
                 if self.steps_to_travel <= self.stopping_distance {
                     self.phase = Phase::Decelerate;
-                    self.rem1 = 0;
-                    self.rem2 = 0;
-                    self.rem3 = 0;
+                    self.rem = 0;
                 };
 
                 let p = self.prev_delay.as_ticks();
-                let psq = p.saturating_pow(2);
-                let q = max((self.stepper.accel_divisor + self.rem1) / psq, 1);
-                self.rem1 = (self.stepper.accel_divisor + self.rem1) % psq;
-                let qsq = q.saturating_pow(2);
-                // dbg!(p, psq, q, qsq, self.rem1, self.rem2, self.rem3);
+                let pcu = p.saturating_pow(3);
                 self.prev_delay = Duration::from_ticks(min(
                     max(
-                        p.saturating_sub((p + self.rem2) / q)
-                            .saturating_add((p + self.rem3) / qsq),
+                        p.saturating_sub((pcu + self.rem) / self.stepper.accel_divisor),
                         self.stepper.cruise_delay.as_ticks(),
                     ),
                     self.stepper.inital_delay,
                 ));
-                self.rem2 = (p.saturating_add(self.rem2)) % q;
-                self.rem3 = (p.saturating_add(self.rem3)) % qsq;
+                self.rem = (pcu + self.rem) % self.stepper.accel_divisor;
 
                 if self.prev_delay == self.stepper.cruise_delay {
                     self.phase = Phase::Cruise
@@ -370,9 +362,7 @@ impl<'a> Iterator for PlannedMove<'a> {
                 self.stepper.update_pos_one_step(self.dir);
                 if self.steps_to_travel <= self.stopping_distance {
                     self.phase = Phase::Decelerate;
-                    self.rem1 = 0;
-                    self.rem2 = 0;
-                    self.rem3 = 0;
+                    self.rem = 0;
                 };
                 Some(self.prev_delay)
             }
@@ -385,21 +375,15 @@ impl<'a> Iterator for PlannedMove<'a> {
                 self.stepper.update_pos_one_step(self.dir);
 
                 let p = self.prev_delay.as_ticks();
-                let psq = p.saturating_pow(2);
-                let q = max((self.stepper.accel_divisor + self.rem1) / psq, 1);
-                self.rem1 = (self.stepper.accel_divisor + self.rem1) % psq;
-                let qsq = q.saturating_pow(2);
-                // dbg!(p, psq, q, qsq, self.rem1, self.rem2, self.rem3);
+                let pcu = p.saturating_pow(3);
                 self.prev_delay = Duration::from_ticks(min(
                     max(
-                        p.saturating_add((p + self.rem2) / q)
-                            .saturating_add((p + self.rem3) / qsq),
+                        p.saturating_add((pcu + self.rem) / self.stepper.accel_divisor),
                         self.stepper.cruise_delay.as_ticks(),
                     ),
                     self.stepper.inital_delay,
                 ));
-                self.rem2 = (p.saturating_add(self.rem2)) % q;
-                self.rem3 = (p.saturating_add(self.rem3)) % qsq;
+                self.rem = (pcu + self.rem) % self.stepper.accel_divisor;
                 Some(self.prev_delay)
             }
         }

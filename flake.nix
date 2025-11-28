@@ -20,6 +20,7 @@
           buildInputs = [
             probe-rs-tools
             (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+            typst
           ];
         };
       }

@@ -325,7 +325,8 @@ impl<'a> FusedIterator for PlannedMove<'a> {}
 impl<'a> Iterator for PlannedMove<'a> {
     type Item = Duration;
 
-    // TODO: For some reason the acceleration curve is asymetrical?
+    // TODO: For some reason the acceleration curve is asymetrical, and goes over the set
+    // acceleration sometimes? the output is 'jagged'...
     fn next(&mut self) -> Option<Self::Item> {
         match self.phase {
             Phase::Accelerate => {
@@ -341,15 +342,16 @@ impl<'a> Iterator for PlannedMove<'a> {
                 };
 
                 let p = self.prev_delay.as_ticks();
-                let pcu = p.saturating_pow(3);
+                let pdividend = p.saturating_pow(3) + self.rem;
+                let pdiff = pdividend / self.stepper.accel_divisor;
+                self.rem = pdividend % self.stepper.accel_divisor;
                 self.prev_delay = Duration::from_ticks(min(
                     max(
-                        p.saturating_sub((pcu + self.rem) / self.stepper.accel_divisor),
+                        p.saturating_sub(pdiff),
                         self.stepper.cruise_delay.as_ticks(),
                     ),
                     self.stepper.inital_delay,
                 ));
-                self.rem = (pcu + self.rem) % self.stepper.accel_divisor;
 
                 if self.prev_delay == self.stepper.cruise_delay {
                     self.phase = Phase::Cruise
@@ -375,15 +377,16 @@ impl<'a> Iterator for PlannedMove<'a> {
                 self.stepper.update_pos_one_step(self.dir);
 
                 let p = self.prev_delay.as_ticks();
-                let pcu = p.saturating_pow(3);
+                let pdividend = p.saturating_pow(3) + self.rem;
+                let pdiff = pdividend / self.stepper.accel_divisor;
+                self.rem = pdividend % self.stepper.accel_divisor;
                 self.prev_delay = Duration::from_ticks(min(
                     max(
-                        p.saturating_add((pcu + self.rem) / self.stepper.accel_divisor),
+                        p.saturating_add(pdiff),
                         self.stepper.cruise_delay.as_ticks(),
                     ),
                     self.stepper.inital_delay,
                 ));
-                self.rem = (pcu + self.rem) % self.stepper.accel_divisor;
                 Some(self.prev_delay)
             }
         }
@@ -492,17 +495,17 @@ mod test {
         for step in steps {
             let prev_vel = TICK_HZ as f64 / prev_step as f64;
             let vel = TICK_HZ as f64 / step.as_ticks() as f64;
-            let accel = ((vel - prev_vel) * prev_vel);
+            let accel = (vel - prev_vel) * prev_vel;
             println!("{},{},{},{}", time.as_ticks(), step.as_ticks(), vel, accel);
 
-            assert!(accel.abs() <= MAX_ACCEL.get() as f64+1.0);
+            assert!(accel.abs() <= MAX_ACCEL.get() as f64 + 1.0);
 
             time += step;
             prev_step = step.as_ticks();
         }
 
         let final_vel = TICK_HZ as f64 / prev_step as f64;
-        let final_accel = ((stepper.start_vel as f64 - final_vel) * final_vel);
+        let final_accel = (stepper.start_vel as f64 - final_vel) * final_vel;
         println!(
             "{},{},{},{}",
             time.as_ticks(),

@@ -21,8 +21,8 @@ $
         0 "if cruising",
         a/F^2 "if decelerating",
       ) \
-  F & = "the tick frequency" \
-  a & = "the acceleration in steps/sec"^2
+  F & = "tick frequency "("Hz") \
+  a & = "target acceleration "("steps"/"sec"^2)
 $
 
 This algorithm works fine for floating point values,
@@ -94,3 +94,29 @@ Unlike Eidermans method, where this enhancement requires only one extra addition
 in the integer form it requires 2 extra divisions and an addition.
 Due to the extra 2 divisions, and the extra space needed for the 2 extra remainders,
 this was deemed not worth the extra precision in the authors usecase.
+
+= Other variables
+
+For convienence of the reader,
+the following are the remaining variables needed to implement a linear ramping step planner.
+
+Given as inputs or paramaters:
+$
+    d & = "move distance" \
+  v_0 & = "Inital speed "("steps"/"sec") \
+    v & = "Max speed "("steps"/"sec") \
+    F & = "tick frequency "("Hz") \
+    a & = "target acceleration "("steps"/"sec"^2)
+$
+
+Precomputed before a move begins:
+$
+  p_1 & = F/sqrt(v_0^2 + 2a)                       && "delay period for inital step" \
+  p_c & = F/v                                      && "delay period for cruise period steps" \
+    S & = (v^2 - v_0^2)/(2a)                       && "distance needed for acceleration to "v \
+  S_a & = cases(S "if" d>2S, ceil d/2 "if" d<=2S) && "actual distance needed for acceleration/decceleration" \
+$
+
+$p$ should be clamped between $p_1$ and $p_c$.
+When $p <= p_c$, the cruise phase should begin.
+The decceleration phase should begin when the remaining steps in the move $<= S_a$.

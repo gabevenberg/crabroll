@@ -146,7 +146,8 @@ impl Stepper {
             Some(current_pos) => {
                 let move_distance: u32 = current_pos.abs_diff(target_pos);
 
-                // TODO: Not sure why I need that +2,
+                // TODO: Not sure why I need that +2, but somewhere we have an off-by-2, as without
+                // this we have too much deccel on the last step of a move.
                 let stopping_distance = if move_distance > self.max_stopping_distance * 2 {
                     self.max_stopping_distance
                 } else {
@@ -514,6 +515,8 @@ mod test {
 
             // due to the fact we are using a first degree approximation of the ideal formula
             // (which requires a square root), we sometimes go up 1% over our max acceleration.
+            // Also, for some reason there are single-step spikes, but they dissapear when taking a
+            // 2 step moving average.
             assert!(avg.abs() <= MAX_ACCEL.get() as f64 + (MAX_ACCEL.get() as f64 / 1.0));
 
             time += step;
@@ -570,6 +573,8 @@ mod test {
 
             // due to the fact we are using a first degree approximation of the ideal formula
             // (which requires a square root), we sometimes go up 1% over our max acceleration.
+            // Also, for some reason there are single-step spikes, but they dissapear when taking a
+            // 2 step moving average.
             assert!(avg.abs() <= MAX_ACCEL.get() as f64 + (MAX_ACCEL.get() as f64 / 1.0));
 
             time += step;

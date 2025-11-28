@@ -14,16 +14,16 @@ and so here we investigate a modification to allow Eidermans algorithm to work w
 Eidermans update formula is as follows:
 $ p = p dot (1 + m dot p^2) $
 Where:
-$ p = "the delay between steps" $
 $
-  m = cases(
-    -a/F^2 "if accelerating",
-    0 "if cruising",
-    a/F^2 "if decelerating",
-  )
+  p & = "the delay between steps" \
+  m & = cases(
+        -a/F^2 "if accelerating",
+        0 "if cruising",
+        a/F^2 "if decelerating",
+      ) \
+  F & = "the tick frequency" \
+  a & = "the acceleration in steps/sec"^2
 $
-$ F = "the tick frequency" $
-$ a = "the acceleration in steps/sec"^2 $
 
 This algorithm works fine for floating point values,
 and indeed, the paper calls out that this algorithm is designed for them.
@@ -57,8 +57,10 @@ $ p=p plus.minus p^3/m^(-1) $
 Unfortunately, the flooring after every division inherent in integer arithmetic reduces precision significantly,
 and causes the acceleration curve to be asymmetrical with respect to the deceleration curve.
 This can be fixed, however, by storing the remainder of each division and adding that remainder to the next iteration.
-$ p=p plus.minus (p^3 + r)/m^(-1) $
-$ r=(p^3 + r) mod m^(-1) $
+$
+  p & =p plus.minus (p^3 + r)/m^(-1) \
+  r & =(p^3 + r) mod m^(-1)
+$
 
 = Modifying the optional enhancement
 
@@ -78,4 +80,17 @@ $q^(-1) = m^(-1)/p^2$.
 and divide rather than multiply:
 $ p=p plus.minus p/q + p/q^2 $
 
-Applying remainder storage to this enhancement is left as an exercise to the reader.
+Adding remainder storage is straightforward with this enhancement,
+though it requires 3 separate remainder variables to be stored:
+$
+  q^(-1) & =(m^(-1)+r_1)/p^2 \
+       p & =p plus.minus (p+r_2)/q + (p+r_3)/q^2 \
+     r_1 & =(m^(-1)+r_1) mod p^2 \
+     r_2 & =(p+r_2) mod q \
+     r_3 & =(p+r_3) mod q^2 \
+$
+
+Unlike Eidermans method, where this enhancement requires only one extra addition and one extra multiplication,
+in the integer form it requires 2 extra divisions and an addition.
+Due to the extra 2 divisions, and the extra space needed for the 2 extra remainders,
+this was deemed not worth the extra precision in the authors usecase.

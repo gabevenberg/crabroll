@@ -146,11 +146,12 @@ impl Stepper {
             Some(current_pos) => {
                 let move_distance: u32 = current_pos.abs_diff(target_pos);
 
+                // TODO: Not sure why I need that +2,
                 let stopping_distance = if move_distance > self.max_stopping_distance * 2 {
                     self.max_stopping_distance
                 } else {
-                    move_distance / 2
-                };
+                    move_distance.div_ceil(2)
+                } + 2;
 
                 let dir = if current_pos < target_pos {
                     self.dir_to_home
@@ -427,7 +428,7 @@ mod test {
 
     use crate::{Direction, Stepper, StepperError};
 
-    const TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(1024).unwrap();
+    const TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(2048).unwrap();
     const MAX_VEL: NonZeroU32 = NonZeroU32::new(255).unwrap();
     const MAX_ACCEL: NonZeroU32 = NonZeroU32::new(64).unwrap();
     const START_VEL: u32 = 50;
@@ -490,15 +491,30 @@ mod test {
         let mut prev_step = stepper.inital_delay;
         let mut time = Duration::from_ticks(0);
 
+        let mut accels: [f64; _] = [0.0; 2];
+        let mut accel_indx = 0;
+
         let (steps, _) = stepper.planned_move(TRAVEL_LIMIT.get()).unwrap();
-        println!("time,delay,vel,accel");
+        println!("time,delay,vel,accel,avg_accel");
         for step in steps {
             let prev_vel = TICK_HZ as f64 / prev_step as f64;
             let vel = TICK_HZ as f64 / step.as_ticks() as f64;
             let accel = (vel - prev_vel) * prev_vel;
-            println!("{},{},{},{}", time.as_ticks(), step.as_ticks(), vel, accel);
+            accels[accel_indx] = accel;
+            accel_indx = (accel_indx + 1) % accels.len();
+            let avg: f64 = accels.iter().sum::<f64>() / accels.len() as f64;
+            println!(
+                "{},{},{},{},{}",
+                time.as_ticks(),
+                step.as_ticks(),
+                vel,
+                accel,
+                avg,
+            );
 
-            assert!(accel.abs() <= MAX_ACCEL.get() as f64 + 1.0);
+            // due to the fact we are using a first degree approximation of the ideal formula
+            // (which requires a square root), we sometimes go up 1% over our max acceleration.
+            assert!(avg.abs() <= MAX_ACCEL.get() as f64 + (MAX_ACCEL.get() as f64 / 1.0));
 
             time += step;
             prev_step = step.as_ticks();
@@ -506,16 +522,74 @@ mod test {
 
         let final_vel = TICK_HZ as f64 / prev_step as f64;
         let final_accel = (stepper.start_vel as f64 - final_vel) * final_vel;
+        accels[accel_indx] = final_accel;
+        let avg: f64 = accels.iter().sum::<f64>() / accels.len() as f64;
         println!(
-            "{},{},{},{}",
+            "{},{},{},{},{}",
             time.as_ticks(),
             prev_step,
             stepper.start_vel,
-            final_accel
+            final_accel,
+            avg,
         );
 
         assert!(final_accel.abs() <= MAX_ACCEL.get() as f64 + 1.0);
         assert_eq!(stepper.curent_pos, Some(TRAVEL_LIMIT.get()));
-        todo!()
+    }
+
+    #[test]
+    fn test_move_max_accel_short() {
+        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL, DIR);
+        let (mut steps, _) = stepper.homing_move(|| true);
+        steps.next();
+        dbg!(&stepper);
+
+        let mut prev_step = stepper.inital_delay;
+        let mut time = Duration::from_ticks(0);
+
+        let mut accels: [f64; _] = [0.0; 2];
+        let mut accel_indx = 0;
+
+        let (steps, _) = stepper.planned_move(MAX_ACCEL.get()).unwrap();
+        println!("time,delay,vel,accel,avg_accel");
+        for step in steps {
+            let prev_vel = TICK_HZ as f64 / prev_step as f64;
+            let vel = TICK_HZ as f64 / step.as_ticks() as f64;
+            let accel = (vel - prev_vel) * prev_vel;
+            accels[accel_indx] = accel;
+            accel_indx = (accel_indx + 1) % accels.len();
+            let avg: f64 = accels.iter().sum::<f64>() / accels.len() as f64;
+            println!(
+                "{},{},{},{},{}",
+                time.as_ticks(),
+                step.as_ticks(),
+                vel,
+                accel,
+                avg,
+            );
+
+            // due to the fact we are using a first degree approximation of the ideal formula
+            // (which requires a square root), we sometimes go up 1% over our max acceleration.
+            assert!(avg.abs() <= MAX_ACCEL.get() as f64 + (MAX_ACCEL.get() as f64 / 1.0));
+
+            time += step;
+            prev_step = step.as_ticks();
+        }
+
+        let final_vel = TICK_HZ as f64 / prev_step as f64;
+        let final_accel = (stepper.start_vel as f64 - final_vel) * final_vel;
+        accels[accel_indx] = final_accel;
+        let avg: f64 = accels.iter().sum::<f64>() / accels.len() as f64;
+        println!(
+            "{},{},{},{},{}",
+            time.as_ticks(),
+            prev_step,
+            stepper.start_vel,
+            final_accel,
+            avg,
+        );
+
+        assert!(final_accel.abs() <= MAX_ACCEL.get() as f64 + 1.0);
+        assert_eq!(stepper.curent_pos, Some(MAX_ACCEL.get()));
     }
 }

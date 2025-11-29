@@ -67,10 +67,10 @@ pub struct Stepper {
 impl Stepper {
     ///Creates new stepper motor instance.
     ///units:
-    ///Travel_limit: max steps from home the stepper motor can safely travel.
-    ///max_speed: max steps/sec the stepper motor can safely rotate.
-    ///max_accel: max steps/sec^2 the stepper motor can achieve.
-    ///dir_to_home: the direction the motor spins when moving towards home.
+    ///* Travel_limit: max steps from home the stepper motor can safely travel.
+    ///* max_speed: max steps/sec the stepper motor can safely rotate.
+    ///* max_accel: max steps/sec^2 the stepper motor can achieve.
+    ///* dir_to_home: the direction the motor spins when moving towards home.
     pub const fn new(
         travel_limit: NonZeroU32,
         max_speed: NonZeroU32,
@@ -297,15 +297,16 @@ impl<'a, F: FnMut() -> bool> Iterator for HomingMove<'a, F> {
     type Item = Duration;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match (self.endstop_fn)() {
-            true => {
+        if self.stepper.curent_pos.is_none() {
+            if (self.endstop_fn)() {
                 self.stepper.curent_pos = Some(0);
                 None
-            }
-            false => {
+            } else {
                 self.steps_moved += 1;
                 Some(self.delay)
             }
+        } else {
+            None
         }
     }
 }
@@ -404,8 +405,6 @@ pub struct ContinuousJog<'a, F: FnMut() -> bool> {
     dir: Direction,
     continue_fn: F,
 }
-
-impl<'a, F: FnMut() -> bool> FusedIterator for ContinuousJog<'a, F> {}
 
 impl<'a, F: FnMut() -> bool> Iterator for ContinuousJog<'a, F> {
     type Item = Duration;

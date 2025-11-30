@@ -122,6 +122,7 @@ impl Stepper {
         &'a mut self,
         endstop_fn: F,
     ) -> (HomingMove<'a, F>, Direction) {
+        self.curent_pos = None;
         let delay = Duration::from_ticks(TICK_HZ / (self.start_vel as u64));
         let dir = self.dir_to_home;
         (
@@ -328,8 +329,8 @@ impl<'a> FusedIterator for PlannedMove<'a> {}
 impl<'a> Iterator for PlannedMove<'a> {
     type Item = Duration;
 
-    // TODO: For some reason the acceleration curve is asymetrical, and goes over the set
-    // acceleration sometimes? the output is 'jagged'...
+    // TODO: For some reason the acceleration curve goes over the set acceleration sometimes? the
+    // output is 'jagged'...
     fn next(&mut self) -> Option<Self::Item> {
         match self.phase {
             Phase::Accelerate => {

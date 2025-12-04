@@ -68,6 +68,7 @@ async fn main(spawner: Spawner) {
         peripherals.GPIO5,
         InputConfig::default().with_pull(Pull::Up),
     );
+    info!("IO initalized!");
 
     let uart = Uart::new(
         peripherals.UART0,
@@ -79,10 +80,12 @@ async fn main(spawner: Spawner) {
     .with_tx(peripherals.GPIO21)
     .with_rx(peripherals.GPIO20)
     .into_async();
+    info!("UART initalized!");
 
     let mut tmc2209 = Tmc2209::new(uart, [true, false, false, false])
         .await
         .unwrap();
+
     // setup general config
     tmc2209.write_register(0, 0, 0b0111000001).await.unwrap();
 
@@ -91,6 +94,13 @@ async fn main(spawner: Spawner) {
         .write_register(0, 0x6c, 0b0001_1000_000000000000000110010011)
         .await
         .unwrap();
+
+    // set current limiting
+    tmc2209
+        .write_register(0, 0x10, 0b0000_10000_00000)
+        .await
+        .unwrap();
+    info!("TMC configured!");
 
     spawner
         .spawn(turn_motor(step_pin, dir_pin, endstop_pin, green_led_pin))
@@ -119,9 +129,9 @@ async fn turn_motor(
     mut led: Output<'static>,
 ) {
     let mut step_planner = Stepper::new(
-        NonZero::new(200 * 4).unwrap(),
         NonZero::new(200 * 16).unwrap(),
-        NonZero::new(200).unwrap(),
+        NonZero::new(200 * 16).unwrap(),
+        NonZero::new(200 * 2).unwrap(),
         50,
         Direction::Cw,
     );
@@ -141,7 +151,7 @@ async fn turn_motor(
 
     loop {
         led.set_high();
-        let (plan, _) = step_planner.planned_move(250).unwrap();
+        let (plan, _) = step_planner.planned_move(500).unwrap();
         for delay in plan {
             let instant = Instant::now();
             step_pin.set_high();

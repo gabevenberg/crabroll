@@ -1,6 +1,5 @@
-use defmt::{Format, debug, error};
+use defmt::{Format, debug, info, error};
 
-use defmt_rtt as _;
 use embedded_io_async::{Error, ErrorType, Read, Write};
 use thiserror::Error;
 

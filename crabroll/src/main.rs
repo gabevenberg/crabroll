@@ -9,10 +9,12 @@
 
 mod tmc2209;
 
+use core::num::NonZero;
+
 use defmt::info;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use esp_hal::{
     clock::CpuClock,
     gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
@@ -20,6 +22,7 @@ use esp_hal::{
     timer::systimer::SystemTimer,
     uart::{Config, Uart},
 };
+use iter_step_gen::{Direction, Stepper};
 use panic_rtt_target as _;
 use tmc2209::Tmc2209;
 
@@ -90,7 +93,7 @@ async fn main(spawner: Spawner) {
         .unwrap();
 
     spawner
-        .spawn(turn_motor(step_pin, dir_pin, green_led_pin))
+        .spawn(turn_motor(step_pin, dir_pin, endstop_pin, green_led_pin))
         .unwrap();
     spawner
         .spawn(light_led_with_button(button_1_pin, red_led_pin))
@@ -112,18 +115,51 @@ async fn light_led_with_button(mut button: Input<'static>, mut led: Output<'stat
 async fn turn_motor(
     mut step_pin: Output<'static>,
     mut dir_pin: Output<'static>,
+    endstop_pin: Input<'static>,
     mut led: Output<'static>,
 ) {
+    let mut step_planner = Stepper::new(
+        NonZero::new(200 * 4).unwrap(),
+        NonZero::new(200 * 16).unwrap(),
+        NonZero::new(200).unwrap(),
+        50,
+        Direction::Cw,
+    );
+
+    dir_pin.set_low();
+
+    let (plan, _) = step_planner.homing_move(|| endstop_pin.is_low());
+    for delay in plan {
+        let instant = Instant::now();
+        step_pin.set_high();
+        Timer::after(Duration::from_nanos(100)).await;
+        step_pin.set_low();
+        Timer::at(instant.saturating_add(delay)).await;
+    }
+
+    info!("homed!");
+
     loop {
-        for _ in 0..200 {
+        led.set_high();
+        let (plan, _) = step_planner.planned_move(250).unwrap();
+        for delay in plan {
+            let instant = Instant::now();
             step_pin.set_high();
-            Timer::after(Duration::from_hz(200 * 2)).await;
+            Timer::after(Duration::from_nanos(100)).await;
             step_pin.set_low();
-            Timer::after(Duration::from_hz(200 * 2)).await;
+            Timer::at(instant.saturating_add(delay)).await;
         }
-        Timer::after_nanos(100).await;
-        dir_pin.toggle();
-        led.toggle();
-        Timer::after_nanos(100).await;
+        dir_pin.set_high();
+
+        led.set_low();
+        let (plan, _) = step_planner.planned_move(0).unwrap();
+        for delay in plan {
+            let instant = Instant::now();
+            step_pin.set_high();
+            Timer::after(Duration::from_nanos(100)).await;
+            step_pin.set_low();
+            Timer::at(instant.saturating_add(delay)).await;
+        }
+        dir_pin.set_low();
     }
 }

@@ -11,11 +11,11 @@
 #show title: set align(center)
 
 #title([
-#context document.title\
-#text(size: 0.75em, [
-  #context document.author.first()\
-  #context document.date.display()
-])
+  #context document.title\
+  #text(size: 0.75em, [
+    #context document.author.first()\
+    #context document.date.display()
+  ])
 ])
 
 = Introduction

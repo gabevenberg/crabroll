@@ -35,7 +35,7 @@ impl Direction {
 
 // a trapezoidal stepper planner that implements the algorithm described
 // [here](http://hwml.com/LeibRamp.pdf), heavily modified for use with integer math.
-// the modifications are explained in the math.typ file in this package.
+// the modifications are explained in the IntLeibRamp.typ file in this package.
 
 ///Trapezoidal stepper planner.
 ///Does not move anything on its own,

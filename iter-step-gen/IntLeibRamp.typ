@@ -26,10 +26,19 @@ However, Eidermans paper is explicitly designed for floating point arithmetic,
 and does not work for integer arithmetic.
 Eiderman notes that was originally designed for an IBM PC, which may have had a floating point coprocessor.
 However, today, most stepper motors are controlled by microcontrollers, not full x86 machines.
-Most microcontrollers do not have a floating point unit,
+Many microcontrollers do not have a floating point unit,
 and so here we investigate a modification to allow Eidermans algorithm to work with integer arithmetic.
 
-= Avoiding small numbers
+= Original formula
+
+With the following inputs,
+$
+    d & = "move distance" \
+  v_0 & = "Inital speed "("steps"/"sec") \
+    v & = "Max speed "("steps"/"sec") \
+    F & = "tick frequency "("Hz") \
+    a & = "target acceleration "("steps"/"sec"^2)
+$
 
 Eidermans update formula is as follows:
 $ p = p dot (1 + m dot p^2) $
@@ -41,15 +50,15 @@ $
         0 "if cruising",
         a/F^2 "if decelerating",
       ) \
-  F & = "tick frequency "("Hz") \
-  a & = "target acceleration "("steps"/"sec"^2)
 $
 
-This algorithm works fine for floating point values,
+= Avoiding small numbers
+
+LeibRamp works fine for floating point values,
 and indeed, the paper calls out that this algorithm is designed for them.
 However, for integer math, natively transcribing the above algorithm into code results in several issues:
 
-- $m$ is almost always 0, as $F^2$ is very large (for some micrcontrollers, it is in-fact dangerously close to $2^64$)
+- $m$ is almost always 0, as $F^2$ is very large (for some microcontrollers, it is in-fact dangerously close to $2^64$)
 - $(1+m dot p^2)$ is intended to always be between 0 and 2, usually around 1.
   In integer math, this means it is always 0 or 1, resulting in no motion or no acceleration.
 
@@ -115,21 +124,10 @@ in the integer form it requires 2 extra divisions and an addition.
 Due to the extra 2 divisions, and the extra space needed for the 2 extra remainders,
 this was deemed not worth the extra precision in the authors usecase.
 
-= Other variables
+= Implementation considerations
 
 For convenience of the reader,
 the following are the remaining variables needed to implement a linear ramping step planner.
-
-Given as inputs or parameters:
-$
-    d & = "move distance" \
-  v_0 & = "Inital speed "("steps"/"sec") \
-    v & = "Max speed "("steps"/"sec") \
-    F & = "tick frequency "("Hz") \
-    a & = "target acceleration "("steps"/"sec"^2)
-$
-
-Precomputed before a move begins:
 $
   p_1 & = F/sqrt(v_0^2 + 2a)                      && "delay period for inital step" \
   p_c & = F/v                                     && "delay period for cruise period steps" \
@@ -137,11 +135,12 @@ $
   S_a & = cases(S "if" d>2S, ceil d/2 "if" d<=2S) && "actual distance needed for acceleration/decceleration" \
 $
 
-And finally, the _ideal_ formula, useful in unit tests and verification:
-$ p = F/sqrt((F/p)^2 + 2a) $
+A move can be split into 3 parts, the acceleration phase, the cruise phase, and the deceleration phase.
+During the acceleration phase, which lasts until $p <= p_c$, the $plus.minus$ is a subtraction.
+During the cruise phase, which lasts until the remaining steps in the move $<=S_a$, $p$ should be held constant at $p_c$.
+During the deceleration phase, which lasts until the target position is reached, the $plus.minus$ is an addition.
 
-$p$ should be clamped between $p_1$ and $p_c$.
-When $p <= p_c$, the cruise phase should begin.
-The deceleration phase should begin when the remaining steps in the move $<= S_a$.
+Finally, the _ideal_ formula, useful in unit tests and verification, is:
+$ p = F/sqrt((F/p)^2 + 2a) $
 
 #bibliography("works.bib")

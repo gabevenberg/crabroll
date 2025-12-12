@@ -41,7 +41,7 @@ $
 $
 
 Eidermans update formula is as follows:
-$ p = p dot (1 + m dot p^2) $
+$ p = p(1 + m p^2) $
 Where:
 $
   p & = "the delay between steps" \
@@ -59,7 +59,7 @@ and indeed, the paper calls out that this algorithm is designed for them.
 However, for integer math, natively transcribing the above algorithm into code results in several issues:
 
 - $m$ is almost always 0, as $F^2$ is very large (for some microcontrollers, it is in-fact dangerously close to $2^64$)
-- $(1+m dot p^2)$ is intended to always be between 0 and 2, usually around 1.
+- $(1+m p^2)$ is intended to always be between 0 and 2, usually around 1.
   In integer math, this means it is always 0 or 1, resulting in no motion or no acceleration.
 
 However, we can do a few transformations to avoid small numbers in intermediate calculations,
@@ -70,10 +70,10 @@ $m^(-1)=F^2/a$. This will be a very large number rather than a very small number
 avoiding truncation to zero.
 Due to this transformation, we now divide by $m^(-1)$.
 The update formula becomes:
-$ p=p dot (1+p^2/m^(-1)) $
+$ p=p(1+p^2/m^(-1)) $
 
 Secondly, we can change the grouping of the final calculation.
-Where $(1+m dot p^2)$ is $tilde.equiv 1$, both $m$ and $p^2$ are relatively large.
+Where $(1+m p^2)$ is $tilde.equiv 1$, both $m$ and $p^2$ are relatively large.
 We can use this to distribute $p$, causing the intermediate calculations to avoid small numbers, like so:
 $ p=p+p^3/m^(-1) $
 
@@ -94,8 +94,8 @@ $
 = Modifying the optional enhancement
 
 Eiderman posits an optional precision enhancement using a couple extra computations to increase the accuracy of the algorithm:
-$ p=p dot (1+q+q^2) $
-where $q = m dot p^2$.
+$ p=p(1+q+q^2) $
+where $q = m p^2$.
 
 We can apply similar transformations to this. As we have already calculated $m^(-1)$, we can redefine $q$ as:
 $ q=p^2/m^(-1) $

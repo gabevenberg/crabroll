@@ -52,3 +52,17 @@ heapless = { version = "0.8", features = ["defmt-03"] }
 # Cant get tls working now, leads to random hanging.
 # embedded-tls = { version = "0.17", default-features = false, features = ["defmt"] }
 # rand = { version = "0.9", default-features = false, features = ["std_rng"] }
+
+[profile.dev]
+# Rust debug is too slow.
+# For debug builds always builds with some optimization
+opt-level = "s"
+
+[profile.release]
+codegen-units    = 1     # LLVM can perform better optimizations using a single thread
+debug            = 2
+debug-assertions = false
+incremental      = false
+lto              = 'fat'
+opt-level        = 's'
+overflow-checks  = false

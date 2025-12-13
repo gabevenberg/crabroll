@@ -18,12 +18,14 @@ use embassy_time::{Duration, Instant, Timer};
 use esp_hal::{
     clock::CpuClock,
     gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
-    interrupt::software::SoftwareInterruptControl,
+    interrupt::{software::SoftwareInterruptControl, Priority},
     timer::systimer::SystemTimer,
     uart::{Config, Uart},
 };
+use esp_rtos::embassy::InterruptExecutor;
 use iter_step_gen::{Direction, Stepper};
 use panic_rtt_target as _;
+use static_cell::StaticCell;
 use tmc2209::Tmc2209;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -42,6 +44,11 @@ async fn main(spawner: Spawner) {
     esp_rtos::start(timer0.alarm0, sw_int.software_interrupt0);
 
     info!("Embassy initialized!");
+
+    static EXECUTOR: StaticCell<InterruptExecutor<2> >  = StaticCell::new();
+    let step_executor = InterruptExecutor::new(sw_int.software_interrupt2);
+    let step_executor = EXECUTOR.init(step_executor);
+    let step_spawner = step_executor.start(Priority::Priority3);
 
     let step_pin = Output::new(peripherals.GPIO7, Level::Low, OutputConfig::default());
     let dir_pin = Output::new(peripherals.GPIO6, Level::Low, OutputConfig::default());
@@ -102,7 +109,7 @@ async fn main(spawner: Spawner) {
         .unwrap();
     info!("TMC configured!");
 
-    spawner
+    step_spawner
         .spawn(turn_motor(step_pin, dir_pin, endstop_pin, green_led_pin))
         .unwrap();
     spawner

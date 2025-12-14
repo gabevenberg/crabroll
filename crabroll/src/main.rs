@@ -102,12 +102,15 @@ async fn main(spawner: Spawner) {
         .await
         .unwrap();
 
+    // TODO: figure out why I need this, else we stall here.
+    // Bug in the UART code/TMC?
+    Timer::after_millis(1).await;
+
     // set current limiting
     tmc2209
         .write_register(0, 0x10, 0b0000_10000_00000)
         .await
         .unwrap();
-    info!("TMC configured!");
 
     step_spawner
         .spawn(turn_motor(step_pin, dir_pin, endstop_pin, green_led_pin))
@@ -115,6 +118,7 @@ async fn main(spawner: Spawner) {
     spawner
         .spawn(light_led_with_button(button_1_pin, red_led_pin))
         .unwrap();
+    info!("Tasks spawned!");
 }
 
 #[embassy_executor::task]

@@ -20,17 +20,8 @@ pub enum StepperError {
 
 #[derive(Format, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
-    Cw,
-    Ccw,
-}
-
-impl Direction {
-    fn opposite(self) -> Self {
-        match self {
-            Direction::Cw => Direction::Ccw,
-            Direction::Ccw => Direction::Cw,
-        }
-    }
+    ToHome,
+    AwayFromHome,
 }
 
 // a trapezoidal stepper planner that implements the algorithm described
@@ -52,7 +43,6 @@ pub struct Stepper {
     // stops when it reaches it.)
     start_vel: u32,
     // Direction to home in.
-    dir_to_home: Direction,
     curent_pos: Option<u32>,
     // precomputed maximum stopping distance
     max_stopping_distance: u32,
@@ -76,14 +66,12 @@ impl Stepper {
         max_speed: NonZeroU32,
         max_accel: NonZeroU32,
         start_vel: u32,
-        dir_to_home: Direction,
     ) -> Self {
         Self {
             travel_limit,
             max_speed,
             max_accel,
             start_vel,
-            dir_to_home,
             curent_pos: None,
             max_stopping_distance: Self::compute_max_stopping_distance(
                 max_speed, start_vel, max_accel,
@@ -121,19 +109,15 @@ impl Stepper {
     pub fn homing_move<'a, F: FnMut() -> bool>(
         &'a mut self,
         endstop_fn: F,
-    ) -> (HomingMove<'a, F>, Direction) {
+    ) -> HomingMove<'a, F> {
         self.curent_pos = None;
         let delay = Duration::from_ticks(TICK_HZ / (self.start_vel as u64));
-        let dir = self.dir_to_home;
-        (
             HomingMove {
                 stepper: self,
                 delay,
                 endstop_fn,
                 steps_moved: 0,
-            },
-            dir,
-        )
+            }
     }
 
     //TODO: Refactor as a typestate for the NotHomed check?
@@ -156,9 +140,9 @@ impl Stepper {
                 } + 2;
 
                 let dir = if current_pos < target_pos {
-                    self.dir_to_home
+                    Direction::AwayFromHome
                 } else {
-                    self.dir_to_home.opposite()
+                    Direction::ToHome
                 };
                 Ok((
                     PlannedMove {
@@ -180,19 +164,18 @@ impl Stepper {
         &'a mut self,
         continue_fn: F,
         dir: Direction,
-    ) -> Result<(ContinuousJog<'a, F>, Direction), StepperError> {
+    ) -> Result<ContinuousJog<'a, F>, StepperError> {
         match self.curent_pos {
             Some(_) => {
                 let delay = Duration::from_ticks(TICK_HZ / (self.start_vel as u64));
-                Ok((
+                Ok(
                     ContinuousJog {
                         stepper: self,
                         delay,
                         continue_fn,
                         dir,
                     },
-                    dir,
-                ))
+                )
             }
             None => Err(StepperError::NotHomed),
         }
@@ -248,11 +231,6 @@ impl Stepper {
         self.inital_delay = Self::compute_inital_delay(start_vel, self.max_accel);
     }
 
-    /// Returns the dir to home of this [`Stepper`].
-    pub fn dir_to_home(&self) -> Direction {
-        self.dir_to_home
-    }
-
     /// Returns the curent pos of this [`Stepper`].
     pub fn pos(&self) -> Option<u32> {
         self.curent_pos
@@ -261,8 +239,8 @@ impl Stepper {
     fn update_pos_one_step(&mut self, dir: Direction) {
         self.curent_pos = Some(
             self.curent_pos
-                .expect("Cant construct ContinousJog if current_pos is None")
-                .saturating_add_signed(if dir == self.dir_to_home { 1 } else { -1 }),
+                .expect("Attempted to update position while not homed.")
+                .saturating_add_signed(if dir == Direction::AwayFromHome { 1 } else { -1 }),
         );
     }
 }
@@ -433,17 +411,15 @@ mod test {
     const MAX_VEL: NonZeroU32 = NonZeroU32::new(255).unwrap();
     const MAX_ACCEL: NonZeroU32 = NonZeroU32::new(64).unwrap();
     const START_VEL: u32 = 50;
-    const DIR: Direction = Direction::Cw;
 
     #[test]
     fn test_home() {
-        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL, DIR);
+        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL);
         assert_eq!(stepper.curent_pos, None);
 
         let mut endstop = [false, false, true].into_iter();
-        let (steps, direction) = stepper.homing_move(|| endstop.next().unwrap());
+        let steps = stepper.homing_move(|| endstop.next().unwrap());
 
-        assert_eq!(direction, DIR);
         for step in steps {
             assert_eq!(step, Duration::from_hz(START_VEL as u64));
             println!("{}", (TICK_HZ / step.as_ticks()));
@@ -453,12 +429,12 @@ mod test {
 
     #[test]
     fn test_move_travel_guards() {
-        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL, DIR);
+        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL);
         assert_eq!(
             stepper.planned_move(100).unwrap_err(),
             StepperError::NotHomed
         );
-        let (mut steps, _) = stepper.homing_move(|| true);
+        let mut steps = stepper.homing_move(|| true);
         steps.next();
         assert_eq!(
             stepper.planned_move(TRAVEL_LIMIT.get() + 1).unwrap_err(),
@@ -468,8 +444,8 @@ mod test {
 
     #[test]
     fn test_move_max_vel() {
-        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL, DIR);
-        let (mut steps, _) = stepper.homing_move(|| true);
+        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL);
+        let mut steps = stepper.homing_move(|| true);
         steps.next();
         dbg!(&stepper);
 
@@ -484,8 +460,8 @@ mod test {
 
     #[test]
     fn test_move_max_accel() {
-        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL, DIR);
-        let (mut steps, _) = stepper.homing_move(|| true);
+        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL);
+        let mut steps = stepper.homing_move(|| true);
         steps.next();
         dbg!(&stepper);
 
@@ -542,8 +518,8 @@ mod test {
 
     #[test]
     fn test_move_max_accel_short() {
-        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL, DIR);
-        let (mut steps, _) = stepper.homing_move(|| true);
+        let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL);
+        let mut steps = stepper.homing_move(|| true);
         steps.next();
         dbg!(&stepper);
 

@@ -48,6 +48,7 @@ defmt-rtt = "1.0"
 thiserror = { version = "2.0", default-features = false }
 bitfield-struct = "0.11"
 heapless = { version = "0.8", features = ["defmt-03"] }
+embassy-sync = { version = "0.7.2", features = ["defmt"] }
 # rust-mqtt = { version = "0.3", default-features = false, features = ["defmt", "no_std", "tls"] }
 # Cant get tls working now, leads to random hanging.
 # embedded-tls = { version = "0.17", default-features = false, features = ["defmt"] }

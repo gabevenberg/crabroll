@@ -8,25 +8,29 @@
 #![allow(clippy::unusual_byte_groupings)]
 
 mod tmc2209;
-
-use core::num::NonZero;
+mod motor;
 
 use defmt::info;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_sync::rwlock::RwLock;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
+use embassy_time::Timer;
 use esp_hal::{
     clock::CpuClock,
     gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
-    interrupt::{software::SoftwareInterruptControl, Priority},
+    interrupt::{Priority, software::SoftwareInterruptControl},
     timer::systimer::SystemTimer,
     uart::{Config, Uart},
 };
 use esp_rtos::embassy::InterruptExecutor;
-use iter_step_gen::{Direction, Stepper};
+use iter_step_gen::Direction;
 use panic_rtt_target as _;
 use static_cell::StaticCell;
 use tmc2209::Tmc2209;
+
+use crate::motor::motor_task;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -45,10 +49,10 @@ async fn main(spawner: Spawner) {
 
     info!("Embassy initialized!");
 
-    static EXECUTOR: StaticCell<InterruptExecutor<2> >  = StaticCell::new();
+    static EXECUTOR: StaticCell<InterruptExecutor<2>> = StaticCell::new();
     let step_executor = InterruptExecutor::new(sw_int.software_interrupt2);
     let step_executor = EXECUTOR.init(step_executor);
-    let step_spawner = step_executor.start(Priority::Priority3);
+    let step_spawner = step_executor.start(Priority::Priority10);
 
     let step_pin = Output::new(peripherals.GPIO7, Level::Low, OutputConfig::default());
     let dir_pin = Output::new(peripherals.GPIO6, Level::Low, OutputConfig::default());
@@ -59,19 +63,19 @@ async fn main(spawner: Spawner) {
     let green_led_pin = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
     let red_led_pin = Output::new(peripherals.GPIO9, Level::Low, OutputConfig::default());
 
-    let button_1_pin = Input::new(
+    let home_button = Input::new(
         peripherals.GPIO10,
         InputConfig::default().with_pull(Pull::Up),
     );
-    let button_2_pin = Input::new(
+    let raise_button = Input::new(
         peripherals.GPIO3,
         InputConfig::default().with_pull(Pull::Up),
     );
-    let button_3_pin = Input::new(
+    let lower_button = Input::new(
         peripherals.GPIO4,
         InputConfig::default().with_pull(Pull::Up),
     );
-    let button_4_pin = Input::new(
+    let bottom_button = Input::new(
         peripherals.GPIO5,
         InputConfig::default().with_pull(Pull::Up),
     );
@@ -112,75 +116,73 @@ async fn main(spawner: Spawner) {
         .await
         .unwrap();
 
-    step_spawner
-        .spawn(turn_motor(step_pin, dir_pin, endstop_pin, green_led_pin))
-        .unwrap();
-    spawner
-        .spawn(light_led_with_button(button_1_pin, red_led_pin))
-        .unwrap();
+    spawner.spawn(home_button_task(home_button)).unwrap();
+    spawner.spawn(raise_button_task(raise_button)).unwrap();
+    spawner.spawn(lower_button_task(lower_button)).unwrap();
+    spawner.spawn(bottom_button_task(bottom_button)).unwrap();
+    step_spawner.spawn(motor_task(step_pin, dir_pin, endstop_pin)).unwrap();
+
     info!("Tasks spawned!");
 }
 
+#[derive(Eq, PartialEq)]
+enum Commands {
+    Home,
+    StartJog(Direction),
+    StopJog,
+    Bottom,
+    MoveToPos(u32)
+}
+
+static DIR_TO_HOME: RwLock<CriticalSectionRawMutex, Level> = RwLock::new(Level::Low);
+static LAST_COMMAND: Signal<CriticalSectionRawMutex, Commands> = Signal::new();
+
 #[embassy_executor::task]
-async fn light_led_with_button(mut button: Input<'static>, mut led: Output<'static>) {
+async fn home_button_task(mut button: Input<'static>) {
     loop {
         button.wait_for_low().await;
-        led.toggle();
-        Timer::after(Duration::from_millis(50)).await;
+        LAST_COMMAND.signal(Commands::Home);
+        info!("home button pushed");
+        Timer::after_millis(50).await;
         button.wait_for_high().await;
-        Timer::after(Duration::from_millis(50)).await;
+        Timer::after_millis(50).await;
     }
 }
 
 #[embassy_executor::task]
-async fn turn_motor(
-    mut step_pin: Output<'static>,
-    mut dir_pin: Output<'static>,
-    endstop_pin: Input<'static>,
-    mut led: Output<'static>,
-) {
-    let mut step_planner = Stepper::new(
-        NonZero::new(200 * 16).unwrap(),
-        NonZero::new(200 * 16).unwrap(),
-        NonZero::new(200 * 2).unwrap(),
-        50,
-        Direction::Cw,
-    );
-
-    dir_pin.set_low();
-
-    let (plan, _) = step_planner.homing_move(|| endstop_pin.is_low());
-    for delay in plan {
-        let instant = Instant::now();
-        step_pin.set_high();
-        Timer::after(Duration::from_nanos(100)).await;
-        step_pin.set_low();
-        Timer::at(instant.saturating_add(delay)).await;
-    }
-
-    info!("homed!");
-
+async fn raise_button_task(mut button: Input<'static>) {
     loop {
-        led.set_high();
-        let (plan, _) = step_planner.planned_move(500).unwrap();
-        for delay in plan {
-            let instant = Instant::now();
-            step_pin.set_high();
-            Timer::after(Duration::from_nanos(100)).await;
-            step_pin.set_low();
-            Timer::at(instant.saturating_add(delay)).await;
-        }
-        dir_pin.set_high();
+        button.wait_for_low().await;
+        info!("raise button pushed");
+        LAST_COMMAND.signal(Commands::StartJog(Direction::ToHome));
+        Timer::after_millis(50).await;
+        button.wait_for_high().await;
+        LAST_COMMAND.signal(Commands::StopJog);
+        Timer::after_millis(50).await;
+    }
+}
 
-        led.set_low();
-        let (plan, _) = step_planner.planned_move(0).unwrap();
-        for delay in plan {
-            let instant = Instant::now();
-            step_pin.set_high();
-            Timer::after(Duration::from_nanos(100)).await;
-            step_pin.set_low();
-            Timer::at(instant.saturating_add(delay)).await;
-        }
-        dir_pin.set_low();
+#[embassy_executor::task]
+async fn lower_button_task(mut button: Input<'static>) {
+    loop {
+        button.wait_for_low().await;
+        info!("lower button pushed");
+        LAST_COMMAND.signal(Commands::StartJog(Direction::ToHome));
+        Timer::after_millis(50).await;
+        button.wait_for_high().await;
+        LAST_COMMAND.signal(Commands::StopJog);
+        Timer::after_millis(50).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn bottom_button_task(mut button: Input<'static>) {
+    loop {
+        button.wait_for_low().await;
+        info!("bottom button pushed");
+        LAST_COMMAND.signal(Commands::Bottom);
+        Timer::after_millis(50).await;
+        button.wait_for_high().await;
+        Timer::after_millis(50).await;
     }
 }

@@ -167,7 +167,7 @@ async fn lower_button_task(mut button: Input<'static>) {
     loop {
         button.wait_for_low().await;
         info!("lower button pushed");
-        LAST_COMMAND.signal(Commands::StartJog(Direction::ToHome));
+        LAST_COMMAND.signal(Commands::StartJog(Direction::AwayFromHome));
         Timer::after_millis(50).await;
         button.wait_for_high().await;
         LAST_COMMAND.signal(Commands::StopJog);

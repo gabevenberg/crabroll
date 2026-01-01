@@ -1,4 +1,3 @@
-use core::num::NonZero;
 use core::{iter::FusedIterator, num::NonZeroU32};
 
 use super::LAST_COMMAND;

@@ -1,0 +1,337 @@
+(footprint "Two_Pin_Through_Hole_Push_Button"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(property "Reference" "REF**"
+		(at 0.5 -2 0)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(uuid "7c44567d-aa74-45cf-91b3-2cdd3d4aa36b")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "Two_Pin_Through_Hole_Push_Button"
+		(at 0 4.5 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "8f5a15b7-6ae6-4912-b0ab-9be47ba54fbe")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "79fd9459-348f-4848-a2cc-12d3bff4a1da")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "990ea3bc-c364-4a43-80f3-b4e6a2b76620")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr through_hole)
+	(fp_line
+		(start -3 -1.27)
+		(end -3 -2.77)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "76065992-cb13-4377-89b8-6ec068ffbcde")
+	)
+	(fp_line
+		(start -3 2.77)
+		(end -3 1.27)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "e57657d3-38de-4f34-add9-e5c35b55ede1")
+	)
+	(fp_line
+		(start -2.5 -3)
+		(end 2.5 -3)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "a6ddc02b-ab0b-4608-9344-072a9fa0b392")
+	)
+	(fp_line
+		(start 2.5 3)
+		(end -2.5 3)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "09484a95-e55b-4a0c-b898-536ff2896ff0")
+	)
+	(fp_line
+		(start 3 -2.77)
+		(end 3 -1.27)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "92a954f3-b377-44b1-9d15-3fd69df1f824")
+	)
+	(fp_line
+		(start 3 1.27)
+		(end 3 2.77)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "8aeca4c8-50cd-4642-acfa-b4d59a76f45d")
+	)
+	(fp_line
+		(start -4.745366 -3.745872)
+		(end -4.495366 -3.745872)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "06f14bee-6512-4e4c-b711-f70ed0f28d96")
+	)
+	(fp_line
+		(start -4.745366 -3.495872)
+		(end -4.745366 -3.745872)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "9757debd-3141-49a2-bba1-f7ae120d8c87")
+	)
+	(fp_line
+		(start -4.745366 3.504128)
+		(end -4.745366 -3.495872)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "da99e926-c940-4be8-b5f9-4efb1513802b")
+	)
+	(fp_line
+		(start -4.745366 3.504128)
+		(end -4.745366 3.754128)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "4cd7244e-df44-41bb-b9e7-71ceceaba593")
+	)
+	(fp_line
+		(start -4.745366 3.754128)
+		(end -4.495366 3.754128)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "4be05e77-a518-48d5-97a2-16da7162e528")
+	)
+	(fp_line
+		(start -4.495366 -3.745872)
+		(end 4.504634 -3.745872)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "802f25d9-9a76-48f1-b853-4ed517987049")
+	)
+	(fp_line
+		(start 4.504634 -3.745872)
+		(end 4.754634 -3.745872)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "0512e24d-496a-432b-a5f5-5249f89fcf73")
+	)
+	(fp_line
+		(start 4.504634 3.754128)
+		(end -4.495366 3.754128)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "b52a58d1-9e29-40f3-9409-bd3b21e0db7f")
+	)
+	(fp_line
+		(start 4.504634 3.754128)
+		(end 4.754634 3.754128)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "f71dffd8-87bd-40bf-8b3c-33dc77dee472")
+	)
+	(fp_line
+		(start 4.754634 -3.745872)
+		(end 4.754634 -3.495872)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "a2a16118-0d83-434b-ab59-0cc7dfee49ca")
+	)
+	(fp_line
+		(start 4.754634 -3.495872)
+		(end 4.754634 3.504128)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "a5b69c42-e466-4e5d-9b3b-f2b34a76593f")
+	)
+	(fp_line
+		(start 4.754634 3.754128)
+		(end 4.754634 3.504128)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "5e515247-d499-4e1c-9df6-8c2724d383f6")
+	)
+	(fp_line
+		(start -2.995366 -2.995872)
+		(end 0.004634 -2.995872)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "378fafd4-2951-46b6-982d-2c1388ef7382")
+	)
+	(fp_line
+		(start -2.995366 3.004128)
+		(end -2.995366 -2.995872)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "92c98b6a-aae3-400f-b661-982ac8767fd3")
+	)
+	(fp_line
+		(start 0.004634 -2.995872)
+		(end 3.004634 -2.995872)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "17a3dde9-8b50-48d6-9fbb-c617a3fadd5a")
+	)
+	(fp_line
+		(start 3.004634 -2.995872)
+		(end 3.004634 3.004128)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "bf40b91b-c329-4b8c-8775-d6de8585e04d")
+	)
+	(fp_line
+		(start 3.004634 3.004128)
+		(end -2.995366 3.004128)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "dc8bc404-b274-4557-a0df-497ec1b21404")
+	)
+	(fp_circle
+		(center 0.004634 0.004128)
+		(end -1.995366 0.254128)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "20b4d237-9eb4-48b4-8111-cacdf3bee937")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 -4.5 0)
+		(layer "F.Fab")
+		(uuid "595f92d2-2495-407c-939b-bc3eaf4d9f7f")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "1" thru_hole circle
+		(at -2.825 0 90)
+		(size 2 2)
+		(drill 1.1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "3f37d4fb-d0ef-426e-b7d6-04109d2628c8")
+	)
+	(pad "2" thru_hole circle
+		(at 2.825 0 90)
+		(size 2 2)
+		(drill 1.1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "475460f7-0dcb-4462-83a8-2444ca0c34b7")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/Crabroll.pretty/3DModels/Two_Pin_Through_Hole_Push_Button.step"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

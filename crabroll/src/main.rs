@@ -7,22 +7,31 @@
 )]
 #![allow(clippy::unusual_byte_groupings)]
 
-mod tmc2209;
 mod motor;
+mod tmc2209;
+
+use core::net::Ipv4Addr;
 
 use defmt::info;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_sync::rwlock::RwLock;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::signal::Signal;
-use embassy_time::Timer;
+use embassy_net::{Runner, StackResources, tcp::TcpSocket};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, rwlock::RwLock, signal::Signal};
+use embassy_time::{Duration, Timer};
+use embedded_io_async::Write;
+use esp_alloc::{self as _, HEAP};
 use esp_hal::{
     clock::CpuClock,
     gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
     interrupt::{Priority, software::SoftwareInterruptControl},
     timer::systimer::SystemTimer,
     uart::{Config, Uart},
+};
+use esp_radio::{
+    Controller,
+    wifi::{
+        ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent, WifiStaState,
+    },
 };
 use esp_rtos::embassy::InterruptExecutor;
 use iter_step_gen::Direction;
@@ -41,7 +50,9 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    esp_alloc::heap_allocator!(size: 64 * 1024);
+    // esp_alloc::heap_allocator!(size: 64 * 1024);
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
+    esp_alloc::heap_allocator!(size: 36 * 1024);
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     let timer0 = SystemTimer::new(peripherals.SYSTIMER);
@@ -120,9 +131,92 @@ async fn main(spawner: Spawner) {
     spawner.spawn(raise_button_task(raise_button)).unwrap();
     spawner.spawn(lower_button_task(lower_button)).unwrap();
     spawner.spawn(bottom_button_task(bottom_button)).unwrap();
-    step_spawner.spawn(motor_task(step_pin, dir_pin, endstop_pin)).unwrap();
+    step_spawner
+        .spawn(motor_task(step_pin, dir_pin, endstop_pin))
+        .unwrap();
 
-    info!("Tasks spawned!");
+    info!("Motor tasks spawned!");
+
+    static RADIO_CONTROLLER: StaticCell<Controller> = StaticCell::new();
+    let radio_controller = RADIO_CONTROLLER.init_with(|| esp_radio::init().unwrap());
+
+    let (controller, interfaces) =
+        esp_radio::wifi::new(radio_controller, peripherals.WIFI, Default::default()).unwrap();
+
+    let wifi_interface = interfaces.sta;
+
+    let config = embassy_net::Config::dhcpv4(Default::default());
+
+    let rng = esp_hal::rng::Rng::new();
+    let seed = (rng.random() as u64) << 32 | rng.random() as u64;
+
+    static STACK_RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+    let stack_resources = STACK_RESOURCES.init_with(|| StackResources::<3>::new());
+
+    // Init network stack
+    let (stack, runner) = embassy_net::new(wifi_interface, config, stack_resources, seed);
+
+    spawner.spawn(connection(controller)).ok();
+    spawner.spawn(net_task(runner)).ok();
+
+    let mut rx_buffer = [0; 4096];
+    let mut tx_buffer = [0; 4096];
+
+    loop {
+        if stack.is_link_up() {
+            break;
+        }
+        Timer::after(Duration::from_millis(500)).await;
+    }
+
+    info!("Waiting to get IP address...");
+    loop {
+        if let Some(config) = stack.config_v4() {
+            info!("Got IP: {}", config.address);
+            break;
+        }
+        Timer::after(Duration::from_millis(500)).await;
+    }
+
+    loop {
+        Timer::after(Duration::from_millis(1_000)).await;
+
+        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+
+        socket.set_timeout(Some(Duration::from_secs(10)));
+
+        let remote_endpoint = (Ipv4Addr::new(142, 250, 185, 115), 80);
+        info!("connecting...");
+        let r = socket.connect(remote_endpoint).await;
+        if let Err(e) = r {
+            info!("connect error: {:?}", e);
+            continue;
+        }
+        info!("connected!");
+        let mut buf = [0; 1024];
+        loop {
+            let r = socket
+                .write_all(b"GET / HTTP/1.0\r\nHost: www.mobile-j.de\r\n\r\n")
+                .await;
+            if let Err(e) = r {
+                info!("write error: {:?}", e);
+                break;
+            }
+            let n = match socket.read(&mut buf).await {
+                Ok(0) => {
+                    info!("read EOF");
+                    break;
+                }
+                Ok(n) => n,
+                Err(e) => {
+                    info!("read error: {:?}", e);
+                    break;
+                }
+            };
+            info!("{}", core::str::from_utf8(&buf[..n]).unwrap());
+        }
+        Timer::after(Duration::from_millis(3000)).await;
+    }
 }
 
 #[derive(Eq, PartialEq)]
@@ -131,7 +225,7 @@ enum Commands {
     StartJog(Direction),
     StopJog,
     Bottom,
-    MoveToPos(u32)
+    MoveToPos(u32),
 }
 
 static DIR_TO_HOME: RwLock<CriticalSectionRawMutex, Level> = RwLock::new(Level::Low);
@@ -185,4 +279,58 @@ async fn bottom_button_task(mut button: Input<'static>) {
         button.wait_for_high().await;
         Timer::after_millis(50).await;
     }
+}
+
+const SSID: &str = env!("SSID");
+const PASSWORD: &str = env!("PASSWORD");
+
+#[embassy_executor::task]
+async fn connection(mut controller: WifiController<'static>) {
+    info!("start connection task");
+    info!("Device capabilities: {:?}", controller.capabilities());
+    loop {
+        match esp_radio::wifi::sta_state() {
+            WifiStaState::Connected => {
+                // wait until we're no longer connected
+                controller.wait_for_event(WifiEvent::StaDisconnected).await;
+                Timer::after(Duration::from_millis(5000)).await
+            }
+            _ => {}
+        }
+        if !matches!(controller.is_started(), Ok(true)) {
+            let station_config = ModeConfig::Client(
+                ClientConfig::default()
+                    .with_ssid(SSID.into())
+                    .with_password(PASSWORD.into()),
+            );
+            controller.set_config(&station_config).unwrap();
+            info!("Starting wifi");
+            controller.start_async().await.unwrap();
+            info!("Wifi started!");
+
+            info!("Scan");
+            let scan_config = ScanConfig::default().with_max(10);
+            let result = controller
+                .scan_with_config_async(scan_config)
+                .await
+                .unwrap();
+            for ap in result {
+                info!("{:?}", ap);
+            }
+        }
+        info!("About to connect...");
+
+        match controller.connect_async().await {
+            Ok(_) => info!("Wifi connected!"),
+            Err(e) => {
+                info!("Failed to connect to wifi: {:?}", e);
+                Timer::after(Duration::from_millis(5000)).await
+            }
+        }
+    }
+}
+
+#[embassy_executor::task]
+async fn net_task(mut runner: Runner<'static, WifiDevice<'static>>) {
+    runner.run().await
 }

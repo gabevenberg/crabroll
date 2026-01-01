@@ -1,4 +1,4 @@
-use defmt::{Format, debug, info, error};
+use defmt::{Format, debug, error};
 
 use embedded_io_async::{Error, ErrorType, Read, Write};
 use thiserror::Error;

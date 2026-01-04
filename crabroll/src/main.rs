@@ -17,9 +17,9 @@ use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_net::{Runner, StackResources, tcp::TcpSocket};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, rwlock::RwLock, signal::Signal};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_io_async::Write;
-use esp_alloc::{self as _, HEAP};
+use esp_alloc as _;
 use esp_hal::{
     clock::CpuClock,
     gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
@@ -151,7 +151,7 @@ async fn main(spawner: Spawner) {
     let seed = (rng.random() as u64) << 32 | rng.random() as u64;
 
     static STACK_RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
-    let stack_resources = STACK_RESOURCES.init_with(|| StackResources::<3>::new());
+    let stack_resources = STACK_RESOURCES.init_with(StackResources::<3>::new);
 
     // Init network stack
     let (stack, runner) = embassy_net::new(wifi_interface, config, stack_resources, seed);
@@ -183,6 +183,7 @@ async fn main(spawner: Spawner) {
 
         let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
 
+        socket.set_keep_alive(Some(Duration::from_secs(5)));
         socket.set_timeout(Some(Duration::from_secs(10)));
 
         let remote_endpoint = (Ipv4Addr::new(142, 250, 185, 115), 80);
@@ -225,6 +226,7 @@ enum Commands {
     StartJog(Direction),
     StopJog,
     Bottom,
+    SetBottom,
     MoveToPos(u32),
 }
 
@@ -235,10 +237,16 @@ static LAST_COMMAND: Signal<CriticalSectionRawMutex, Commands> = Signal::new();
 async fn home_button_task(mut button: Input<'static>) {
     loop {
         button.wait_for_low().await;
-        LAST_COMMAND.signal(Commands::Home);
-        info!("home button pushed");
+        let start_press = Instant::now();
         Timer::after_millis(50).await;
         button.wait_for_high().await;
+        if start_press.elapsed() > Duration::from_secs(1) {
+            LAST_COMMAND.signal(Commands::Home);
+            info!("home button long pushed");
+        } else {
+            LAST_COMMAND.signal(Commands::MoveToPos(0));
+            info!("home button pushed");
+        }
         Timer::after_millis(50).await;
     }
 }
@@ -273,10 +281,16 @@ async fn lower_button_task(mut button: Input<'static>) {
 async fn bottom_button_task(mut button: Input<'static>) {
     loop {
         button.wait_for_low().await;
-        info!("bottom button pushed");
-        LAST_COMMAND.signal(Commands::Bottom);
+        let start_press = Instant::now();
         Timer::after_millis(50).await;
         button.wait_for_high().await;
+        if start_press.elapsed() > Duration::from_secs(1) {
+            LAST_COMMAND.signal(Commands::SetBottom);
+            info!("bottom button long pushed");
+        } else {
+            LAST_COMMAND.signal(Commands::Bottom);
+            info!("bottom button pushed");
+        }
         Timer::after_millis(50).await;
     }
 }
@@ -289,13 +303,10 @@ async fn connection(mut controller: WifiController<'static>) {
     info!("start connection task");
     info!("Device capabilities: {:?}", controller.capabilities());
     loop {
-        match esp_radio::wifi::sta_state() {
-            WifiStaState::Connected => {
-                // wait until we're no longer connected
-                controller.wait_for_event(WifiEvent::StaDisconnected).await;
-                Timer::after(Duration::from_millis(5000)).await
-            }
-            _ => {}
+        if esp_radio::wifi::sta_state() == WifiStaState::Connected {
+            // wait until we're no longer connected
+            controller.wait_for_event(WifiEvent::StaDisconnected).await;
+            Timer::after(Duration::from_millis(5000)).await
         }
         if !matches!(controller.is_started(), Ok(true)) {
             let station_config = ModeConfig::Client(

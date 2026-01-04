@@ -20,6 +20,7 @@ pub(crate) async fn motor_task(
     endstop_pin: Input<'static>,
 ) {
     let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL);
+    execute_home(&mut step_pin, &mut dir_pin, &mut stepper, &endstop_pin).await;
     loop {
         match LAST_COMMAND.wait().await {
             Commands::Home => {
@@ -42,6 +43,15 @@ pub(crate) async fn motor_task(
                     Ok(_) => info!("moved to bottom"),
                     Err(e) => info!("Error: {}", e),
                 };
+            }
+            Commands::SetBottom => {
+                if let Some(pos) = stepper.pos() {
+                    info!("Setting current position as bottom");
+                    let pos = NonZeroU32::new(pos).unwrap_or(NonZeroU32::MIN);
+                    stepper.set_travel_limit(pos);
+                } else {
+                    info!("Attempted to set travel limit while unhomed");
+                }
             }
             Commands::MoveToPos(pos) => {
                 info!("moving to {}", pos);

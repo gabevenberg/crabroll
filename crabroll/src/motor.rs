@@ -1,7 +1,7 @@
 use core::{iter::FusedIterator, num::NonZeroU32};
 
 use super::LAST_COMMAND;
-use crate::{Commands, DIR_TO_HOME};
+use crate::{Commands, DIR_TO_HOME, ERROR_SIGNAL};
 
 use defmt::info;
 use embassy_time::{Duration, Instant, Timer};
@@ -32,7 +32,10 @@ pub(crate) async fn motor_task(
                 info!("jogging in {} direction", direction);
                 match execute_jog(&mut step_pin, &mut dir_pin, &mut stepper, direction).await {
                     Ok(_) => info!("jogged"),
-                    Err(e) => info!("Error: {}", e),
+                    Err(e) => {
+                        info!("Error: {}", e);
+                        ERROR_SIGNAL.signal(());
+                    }
                 };
             }
             Commands::StopJog => (),
@@ -41,7 +44,10 @@ pub(crate) async fn motor_task(
                 let travel_limit = stepper.travel_limit().get();
                 match execute_move(&mut step_pin, &mut dir_pin, &mut stepper, travel_limit).await {
                     Ok(_) => info!("moved to bottom"),
-                    Err(e) => info!("Error: {}", e),
+                    Err(e) => {
+                        info!("Error: {}", e);
+                        ERROR_SIGNAL.signal(());
+                    }
                 };
             }
             Commands::SetBottom => {
@@ -51,13 +57,17 @@ pub(crate) async fn motor_task(
                     stepper.set_travel_limit(pos);
                 } else {
                     info!("Attempted to set travel limit while unhomed");
+                    ERROR_SIGNAL.signal(());
                 }
             }
             Commands::MoveToPos(pos) => {
                 info!("moving to {}", pos);
                 match execute_move(&mut step_pin, &mut dir_pin, &mut stepper, pos).await {
                     Ok(_) => info!("moved to pos"),
-                    Err(e) => info!("Error: {}", e),
+                    Err(e) => {
+                        info!("Error: {}", e);
+                        ERROR_SIGNAL.signal(());
+                    },
                 };
             }
         }

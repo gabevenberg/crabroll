@@ -131,6 +131,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(raise_button_task(raise_button)).unwrap();
     spawner.spawn(lower_button_task(lower_button)).unwrap();
     spawner.spawn(bottom_button_task(bottom_button)).unwrap();
+    spawner.spawn(error_led_task(red_led_pin)).unwrap();
     step_spawner
         .spawn(motor_task(step_pin, dir_pin, endstop_pin))
         .unwrap();
@@ -232,6 +233,17 @@ enum Commands {
 
 static DIR_TO_HOME: RwLock<CriticalSectionRawMutex, Level> = RwLock::new(Level::Low);
 static LAST_COMMAND: Signal<CriticalSectionRawMutex, Commands> = Signal::new();
+//TODO: Surely theres a way to use an atomicbool here? The main thing is we need to be able to
+//await it.
+static ERROR_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+#[embassy_executor::task]
+async fn error_led_task(mut led: Output<'static>){
+    ERROR_SIGNAL.wait().await;
+    led.set_high();
+    Timer::after_secs(1).await;
+    led.set_low();
+}
 
 #[embassy_executor::task]
 async fn home_button_task(mut button: Input<'static>) {

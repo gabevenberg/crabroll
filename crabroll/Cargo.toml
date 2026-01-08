@@ -14,7 +14,7 @@ esp-hal = { version = "1.0", features = [
   "esp32c3",
   "unstable",
 ] }
-embassy-net = { version = "0.7", features = [
+embassy-net = { version = "0.8", features = [
   "defmt",
   "dhcpv4",
   "tcp",
@@ -25,8 +25,8 @@ embassy-net = { version = "0.7", features = [
   "alloc",
   "icmp"
 ] }
-embedded-io = { version = "0.6", features = ["defmt-03"] }
-embedded-io-async = { version = "0.6", features = ["defmt-03"] }
+embedded-io = { version = "0.7", features = ["defmt"] }
+embedded-io-async = { version = "0.7", features = ["defmt"]}
 esp-alloc = { version = "0.9", features = ["defmt"] }
 panic-rtt-target = { version = "0.2", features = ["defmt"] }
 critical-section = "1.2"
@@ -36,11 +36,12 @@ esp-rtos = { version = "0.2", features = ["defmt", "esp32c3", "embassy", "esp-ra
 static_cell = "2.1"
 defmt-rtt = "1.0"
 thiserror = { version = "2.0", default-features = false }
-bitfield-struct = "0.11"
-heapless = { version = "0.8", features = ["defmt-03"] }
+bitfield-struct = "0.12"
+heapless = { version = "0.9", features = ["defmt"] }
 embassy-sync = { version = "0.7", features = ["defmt"] }
 rust-mqtt = { version = "0.4", features = ["defmt"] }
 esp-radio = { version = "0.17", features = ["esp32c3", "wifi", "defmt"] }
+embassy-futures = { version = "0.1.2", features = ["defmt"] }
 
 [profile.dev]
 # Rust debug is too slow.

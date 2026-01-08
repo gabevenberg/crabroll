@@ -1,7 +1,7 @@
 use core::{iter::FusedIterator, num::NonZeroU32};
 
 use super::LAST_COMMAND;
-use crate::{Commands, DIR_TO_HOME, ERROR_SIGNAL};
+use crate::{CURRENT_POS, Command, DIR_TO_HOME, ERROR_SIGNAL};
 
 use defmt::info;
 use embassy_time::{Duration, Instant, Timer};
@@ -23,12 +23,12 @@ pub(crate) async fn motor_task(
     execute_home(&mut step_pin, &mut dir_pin, &mut stepper, &endstop_pin).await;
     loop {
         match LAST_COMMAND.wait().await {
-            Commands::Home => {
+            Command::Home => {
                 info!("homing");
                 execute_home(&mut step_pin, &mut dir_pin, &mut stepper, &endstop_pin).await;
                 info!("homed");
             }
-            Commands::StartJog(direction) => {
+            Command::StartJog(direction) => {
                 info!("jogging in {} direction", direction);
                 match execute_jog(&mut step_pin, &mut dir_pin, &mut stepper, direction).await {
                     Ok(_) => info!("jogged"),
@@ -38,19 +38,8 @@ pub(crate) async fn motor_task(
                     }
                 };
             }
-            Commands::StopJog => (),
-            Commands::Bottom => {
-                info!("moving to bottom");
-                let travel_limit = stepper.travel_limit().get();
-                match execute_move(&mut step_pin, &mut dir_pin, &mut stepper, travel_limit).await {
-                    Ok(_) => info!("moved to bottom"),
-                    Err(e) => {
-                        info!("Error: {}", e);
-                        ERROR_SIGNAL.signal(());
-                    }
-                };
-            }
-            Commands::SetBottom => {
+            Command::StopJog => (),
+            Command::SetBottom => {
                 if let Some(pos) = stepper.pos() {
                     info!("Setting current position as bottom");
                     let pos = NonZeroU32::new(pos).unwrap_or(NonZeroU32::MIN);
@@ -60,17 +49,26 @@ pub(crate) async fn motor_task(
                     ERROR_SIGNAL.signal(());
                 }
             }
-            Commands::MoveToPos(pos) => {
+            Command::MoveToPos(percent) => {
+                info!("moving to {}", percent);
+                let pos = (percent as u32 * stepper.travel_limit().get()) / 100;
                 info!("moving to {}", pos);
                 match execute_move(&mut step_pin, &mut dir_pin, &mut stepper, pos).await {
                     Ok(_) => info!("moved to pos"),
                     Err(e) => {
                         info!("Error: {}", e);
                         ERROR_SIGNAL.signal(());
-                    },
+                    }
                 };
             }
         }
+        CURRENT_POS.signal(if let Some(p) = stepper.pos() {
+            ((p * 100) / stepper.travel_limit())
+                .try_into()
+                .unwrap_or(100)
+        } else {
+            -1
+        });
     }
 }
 
@@ -112,7 +110,7 @@ async fn execute_jog<'a>(
         || {
             !LAST_COMMAND
                 .try_take()
-                .is_some_and(|c| c == Commands::StopJog)
+                .is_some_and(|c| c == Command::StopJog)
         },
         dir,
     )?;

@@ -9,16 +9,17 @@
 
 mod motor;
 mod tmc2209;
+mod wifi;
 
 use core::net::Ipv4Addr;
 
-use defmt::info;
+use defmt::{error, info};
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_net::{Runner, StackResources, tcp::TcpSocket};
+use embassy_futures::select::{Either3, select3};
+use embassy_net::{IpAddress, StackResources, tcp::TcpSocket};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, rwlock::RwLock, signal::Signal};
 use embassy_time::{Duration, Instant, Timer};
-use embedded_io_async::Write;
 use esp_alloc as _;
 use esp_hal::{
     clock::CpuClock,
@@ -27,30 +28,46 @@ use esp_hal::{
     timer::systimer::SystemTimer,
     uart::{Config, Uart},
 };
-use esp_radio::{
-    Controller,
-    wifi::{
-        ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent, WifiStaState,
-    },
-};
+use esp_radio::Controller;
 use esp_rtos::embassy::InterruptExecutor;
 use iter_step_gen::Direction;
 use panic_rtt_target as _;
+use rust_mqtt::{
+    Bytes,
+    buffer::AllocBuffer,
+    client::{
+        Client,
+        event::{Event, Suback},
+        options::{
+            ConnectOptions, PublicationOptions, RetainHandling, SubscriptionOptions, WillOptions,
+        },
+    },
+    config::{KeepAlive, SessionExpiryInterval},
+    types::{MqttBinary, MqttString, QoS, TopicName},
+};
 use static_cell::StaticCell;
 use tmc2209::Tmc2209;
 
-use crate::motor::motor_task;
+use crate::{
+    motor::motor_task,
+    wifi::{connection, net_task},
+};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-const _HOSTNAME: &str = env!("HOSTNAME");
+const HOST_ID: MqttString = unsafe { MqttString::from_slice_unchecked(env!("HOST_ID")) };
+const COMMAND_TOPIC: MqttString =
+    unsafe { MqttString::from_slice_unchecked(env!("COMMAND_TOPIC")) };
+const POS_TOPIC: MqttString = unsafe { MqttString::from_slice_unchecked(env!("POS_TOPIC")) };
+const MQTT_USERNAME: MqttString = unsafe { MqttString::from_slice_unchecked(env!("MQTT_USERNAME")) };
+const MQTT_PASSWORD: MqttString = unsafe { MqttString::from_slice_unchecked(env!("MQTT_PASSWORD")) };
+const MQTT_BROKER_IP: &str = env!("MQTT_BROKER_IP");
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    // esp_alloc::heap_allocator!(size: 64 * 1024);
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
     esp_alloc::heap_allocator!(size: 36 * 1024);
 
@@ -163,10 +180,7 @@ async fn main(spawner: Spawner) {
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
 
-    loop {
-        if stack.is_link_up() {
-            break;
-        }
+    while !stack.is_link_up() {
         Timer::after(Duration::from_millis(500)).await;
     }
 
@@ -179,66 +193,162 @@ async fn main(spawner: Spawner) {
         Timer::after(Duration::from_millis(500)).await;
     }
 
+    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+
+    socket.set_keep_alive(Some(Duration::from_secs(5)));
+    socket.set_timeout(Some(Duration::from_secs(10)));
+
+    let mut buffer = AllocBuffer;
+
+    let mut client = Client::<_, _, 5, 3, 3>::new(&mut buffer);
+    let addr: IpAddress = MQTT_BROKER_IP.parse::<Ipv4Addr>().unwrap().into();
+    if let Err(e) = socket.connect((addr, 1883)).await {
+        error!("Error connecting to mqtt server: {}", e);
+    };
+    match client
+        .connect(
+            socket,
+            &ConnectOptions {
+                clean_start: false,
+                keep_alive: KeepAlive::Seconds(KEEPALIVE_TIME),
+                session_expiry_interval: SessionExpiryInterval::Seconds(
+                    (KEEPALIVE_TIME * 2).into(),
+                ),
+                user_name: Some(MQTT_USERNAME),
+                password: Some(MQTT_PASSWORD.into()),
+                will: Some(WillOptions {
+                    will_qos: QoS::ExactlyOnce,
+                    will_retain: true,
+                    will_topic: MqttString::try_from("crabroll-dead").unwrap(),
+                    will_payload: MqttBinary::try_from("crabroll died :(").unwrap(),
+                    will_delay_interval: 10,
+                    is_payload_utf8: true,
+                    message_expiry_interval: Some(20),
+                    content_type: Some(MqttString::try_from("txt").unwrap()),
+                    response_topic: None,
+                    correlation_data: None,
+                }),
+            },
+            Some(HOST_ID),
+        )
+        .await
+    {
+        Ok(c) => {
+            info!("Connected to server: {:?}", c);
+            info!("{:?}", client.client_config());
+            info!("{:?}", client.server_config());
+            info!("{:?}", client.shared_config());
+            info!("{:?}", client.session());
+        }
+        Err(e) => {
+            error!("failed to oconnect to broker: {:?}", e);
+            panic!()
+        }
+    }
+
+    let sub_options = SubscriptionOptions {
+        retain_handling: RetainHandling::SendIfNotSubscribedBefore,
+        retain_as_published: true,
+        no_local: false,
+        qos: QoS::ExactlyOnce,
+    };
+
+    // saftey: The string is static, we know it is the correct syntax. Also, since this is not a
+    // memory saftey issue, I disagree this function needs to be unsafe at all.
+    let command_topic =
+        unsafe { TopicName::new_unchecked(COMMAND_TOPIC) };
+    let pos_topic =
+        unsafe { TopicName::new_unchecked(POS_TOPIC) };
+
+    let pub_options = PublicationOptions {
+        retain: true,
+        topic: pos_topic,
+        qos: QoS::AtMostOnce,
+    };
+    client
+        .subscribe(command_topic.clone().into(), sub_options)
+        .await
+        .unwrap();
+
+    match client.poll().await {
+        Ok(Event::Suback(Suback {
+            packet_identifier: _,
+            reason_code,
+        })) => info!("Subscribed with reason code {:?}", reason_code),
+        Ok(e) => {
+            error!("Expected Suback but received event {:?}", e);
+            return;
+        }
+        Err(e) => {
+            error!("Failed to receive Suback {:?}", e);
+            return;
+        }
+    };
+
     loop {
-        Timer::after(Duration::from_millis(1_000)).await;
-
-        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-
-        socket.set_keep_alive(Some(Duration::from_secs(5)));
-        socket.set_timeout(Some(Duration::from_secs(10)));
-
-        let remote_endpoint = (Ipv4Addr::new(142, 250, 185, 115), 80);
-        info!("connecting...");
-        let r = socket.connect(remote_endpoint).await;
-        if let Err(e) = r {
-            info!("connect error: {:?}", e);
-            continue;
-        }
-        info!("connected!");
-        let mut buf = [0; 1024];
-        loop {
-            let r = socket
-                .write_all(b"GET / HTTP/1.0\r\nHost: www.mobile-j.de\r\n\r\n")
-                .await;
-            if let Err(e) = r {
-                info!("write error: {:?}", e);
-                break;
+        match select3(
+            Timer::after_secs(KEEPALIVE_TIME.into()),
+            client.poll_header(),
+            CURRENT_POS.wait(),
+        )
+        .await
+        {
+            Either3::First(_) => {
+                if let Err(e) = client.ping().await {
+                    error!("failed to ping: {:?}", e)
+                } else {
+                    info!("pinged broker");
+                }
             }
-            let n = match socket.read(&mut buf).await {
-                Ok(0) => {
-                    info!("read EOF");
-                    break;
+            Either3::Second(Err(e)) => error!("error polling: {:?}", e),
+            Either3::Second(Ok(header)) => match client.poll_body(header).await {
+                Ok(Event::Publish(e)) => {
+                    info!("Received Message {:?}", e);
+                    if e.topic == command_topic.clone().into() {
+                        LAST_COMMAND.signal(Command::MoveToPos(u8::from_le_bytes([*e
+                            .message
+                            .first()
+                            .unwrap_or(&0)])));
+                    };
                 }
-                Ok(n) => n,
+                Ok(e) => info!("Received Event {:?}", e),
                 Err(e) => {
-                    info!("read error: {:?}", e);
-                    break;
+                    error!("Failed to poll body: {:?}", e);
                 }
-            };
-            info!("{}", core::str::from_utf8(&buf[..n]).unwrap());
+            },
+            Either3::Third(pos) => {
+                let pos = Bytes::Borrowed(&pos.to_le_bytes());
+                if let Err(e) = client.publish(&pub_options, pos).await {
+                    error!("failed to publish: {:?}", e)
+                } else {
+                    info!("publised pos")
+                };
+            }
         }
-        Timer::after(Duration::from_millis(3000)).await;
     }
 }
 
+const KEEPALIVE_TIME: u16 = 60;
+
 #[derive(Eq, PartialEq)]
-enum Commands {
+enum Command {
     Home,
     StartJog(Direction),
     StopJog,
-    Bottom,
     SetBottom,
-    MoveToPos(u32),
+    MoveToPos(u8),
 }
 
 static DIR_TO_HOME: RwLock<CriticalSectionRawMutex, Level> = RwLock::new(Level::Low);
-static LAST_COMMAND: Signal<CriticalSectionRawMutex, Commands> = Signal::new();
+static LAST_COMMAND: Signal<CriticalSectionRawMutex, Command> = Signal::new();
+// in percentage, if -1, current position is unknown. Should also try to replace with an atomic.
+static CURRENT_POS: Signal<CriticalSectionRawMutex, i8> = Signal::new();
 //TODO: Surely theres a way to use an atomicbool here? The main thing is we need to be able to
 //await it.
 static ERROR_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 #[embassy_executor::task]
-async fn error_led_task(mut led: Output<'static>){
+async fn error_led_task(mut led: Output<'static>) {
     ERROR_SIGNAL.wait().await;
     led.set_high();
     Timer::after_secs(1).await;
@@ -253,10 +363,10 @@ async fn home_button_task(mut button: Input<'static>) {
         Timer::after_millis(50).await;
         button.wait_for_high().await;
         if start_press.elapsed() > Duration::from_secs(1) {
-            LAST_COMMAND.signal(Commands::Home);
+            LAST_COMMAND.signal(Command::Home);
             info!("home button long pushed");
         } else {
-            LAST_COMMAND.signal(Commands::MoveToPos(0));
+            LAST_COMMAND.signal(Command::MoveToPos(0));
             info!("home button pushed");
         }
         Timer::after_millis(50).await;
@@ -268,10 +378,10 @@ async fn raise_button_task(mut button: Input<'static>) {
     loop {
         button.wait_for_low().await;
         info!("raise button pushed");
-        LAST_COMMAND.signal(Commands::StartJog(Direction::ToHome));
+        LAST_COMMAND.signal(Command::StartJog(Direction::ToHome));
         Timer::after_millis(50).await;
         button.wait_for_high().await;
-        LAST_COMMAND.signal(Commands::StopJog);
+        LAST_COMMAND.signal(Command::StopJog);
         Timer::after_millis(50).await;
     }
 }
@@ -281,10 +391,10 @@ async fn lower_button_task(mut button: Input<'static>) {
     loop {
         button.wait_for_low().await;
         info!("lower button pushed");
-        LAST_COMMAND.signal(Commands::StartJog(Direction::AwayFromHome));
+        LAST_COMMAND.signal(Command::StartJog(Direction::AwayFromHome));
         Timer::after_millis(50).await;
         button.wait_for_high().await;
-        LAST_COMMAND.signal(Commands::StopJog);
+        LAST_COMMAND.signal(Command::StopJog);
         Timer::after_millis(50).await;
     }
 }
@@ -297,63 +407,12 @@ async fn bottom_button_task(mut button: Input<'static>) {
         Timer::after_millis(50).await;
         button.wait_for_high().await;
         if start_press.elapsed() > Duration::from_secs(1) {
-            LAST_COMMAND.signal(Commands::SetBottom);
+            LAST_COMMAND.signal(Command::SetBottom);
             info!("bottom button long pushed");
         } else {
-            LAST_COMMAND.signal(Commands::Bottom);
+            LAST_COMMAND.signal(Command::MoveToPos(100));
             info!("bottom button pushed");
         }
         Timer::after_millis(50).await;
     }
-}
-
-const SSID: &str = env!("SSID");
-const PASSWORD: &str = env!("PASSWORD");
-
-#[embassy_executor::task]
-async fn connection(mut controller: WifiController<'static>) {
-    info!("start connection task");
-    info!("Device capabilities: {:?}", controller.capabilities());
-    loop {
-        if esp_radio::wifi::sta_state() == WifiStaState::Connected {
-            // wait until we're no longer connected
-            controller.wait_for_event(WifiEvent::StaDisconnected).await;
-            Timer::after(Duration::from_millis(5000)).await
-        }
-        if !matches!(controller.is_started(), Ok(true)) {
-            let station_config = ModeConfig::Client(
-                ClientConfig::default()
-                    .with_ssid(SSID.into())
-                    .with_password(PASSWORD.into()),
-            );
-            controller.set_config(&station_config).unwrap();
-            info!("Starting wifi");
-            controller.start_async().await.unwrap();
-            info!("Wifi started!");
-
-            info!("Scan");
-            let scan_config = ScanConfig::default().with_max(10);
-            let result = controller
-                .scan_with_config_async(scan_config)
-                .await
-                .unwrap();
-            for ap in result {
-                info!("{:?}", ap);
-            }
-        }
-        info!("About to connect...");
-
-        match controller.connect_async().await {
-            Ok(_) => info!("Wifi connected!"),
-            Err(e) => {
-                info!("Failed to connect to wifi: {:?}", e);
-                Timer::after(Duration::from_millis(5000)).await
-            }
-        }
-    }
-}
-
-#[embassy_executor::task]
-async fn net_task(mut runner: Runner<'static, WifiDevice<'static>>) {
-    runner.run().await
 }

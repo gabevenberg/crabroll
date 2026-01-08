@@ -2,10 +2,15 @@
 runner = "probe-rs attach --chip=esp32c3 --preverify --always-print-stacktrace --no-location --catch-hardfault"
 
 [env]
-DEFMT_LOG="info"
+DEFMT_LOG="error"
 SSID="REPLACE"
 PASSWORD="ME"
-HOSTNAME="Crabroll"
+MQTT_USERNAME="REPLACE"
+MQTT_PASSWORD="ME"
+MQTT_BROKER_IP="10.10.0.3"
+HOST_ID="crabroll-test"
+COMMAND_TOPIC="crabroll/test/command"
+POS_TOPIC="crabroll/test/pos"
 
 [build]
 rustflags = [

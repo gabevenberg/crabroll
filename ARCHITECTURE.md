@@ -8,17 +8,22 @@ Roughly, the architecture looks like:
 flowchart
 main[[main]]
 main --o step_executor
-main --o mqtt_listener & mqtt_sender
+main --o mqtt_handler & wifi_handler & button_handler & led_handler
 subgraph stepper motor
 step_executor[[step executor]]-->step_planner[step planner]
 tmc_configurator[TMC2209 configuration driver]
 end
-subgraph networking
-mqtt_listener[[MQTT listener]]
-mqtt_sender[[MQTT sender]]
+subgraph physical interface
+button_handler[[button handlers]]
+led_handler[[led handler]]
 end
-mqtt_listener --x step_executor
-step_executor --x mqtt_sender
+subgraph networking
+mqtt_handler[[MQTT listener]]
+wifi_handler[[WiFi handler]]
+end
+mqtt_handler x--x step_executor
+button_handler --x step_executor
+step_executor --x led_handler
 main --> tmc_configurator
 ```
 
@@ -32,27 +37,23 @@ end
 ```
 
 Main spawns all tasks,
-and does the initial hardware setup, as well as allocating resources and channels on the stack for communication between tasks.
-Main also sets up the network stack, 
+and does the initial hardware setup,
+as well as allocating resources and signals on the stack for communication between tasks.
+Main also sets up the network stack.
 
-MQTT listener subscribes to relevant MQTT topics from home assistant,
-and sends commands as needed to the step executor.
-After all initialization is done, main is also responsible for the devices physical UI,
-its 4 buttons and 2 LEDs.
+The MQTT handler subscribes to relevant MQTT topics from home assistant,
+sends commands as needed to the step executor,
+and listens to position updates from teh step executor in order to publish MQTT position updates.
 
-MQTT sender is responsible for sending status updates to home assistant,
-via publishing changes to things like step position to MQTT.
+The wifi handler simply connects to wifi and attempts to reconnect whenever that connection is lost.
 
 The step executor is a high-priority task that is responsible for the toggling of the TMC2209's step and dir pins.
 It takes the target position from the MQTT listener,
-and through calling the step planner's `next_step()` method,
+and through iterating through the step planners step delays,
 toggles the step pin at the correct timings to accelerate and decelerate the motor.
 
 The step planner is a 'plain' struct with non-blocking, non-async methods,
 which calculates acceleration curves for motor moves.
-(TODO: Does the step planner store the motors current position and generate steps by getting a new target position,
-or is it 'dumb', and only deal with relative moves?
-If it is not dumb, the step planner could enable features like interrupting moves smoothly.)
 
 The TMC2209 configuration driver is an abstraction layer over the tmc2209's uart interface.
 It is a bitfield based struct allowing configuration of things like microstepping, silent modes, and power saving modes.

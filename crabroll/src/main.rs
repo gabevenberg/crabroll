@@ -11,7 +11,7 @@ mod motor;
 mod tmc2209;
 mod wifi;
 
-use core::net::Ipv4Addr;
+use core::{net::Ipv4Addr, u8};
 
 use defmt::{error, info};
 use defmt_rtt as _;
@@ -92,19 +92,19 @@ async fn main(spawner: Spawner) {
     let red_led_pin = Output::new(peripherals.GPIO9, Level::Low, OutputConfig::default());
 
     let home_button = Input::new(
-        peripherals.GPIO10,
+        peripherals.GPIO5,
         InputConfig::default().with_pull(Pull::Up),
     );
     let raise_button = Input::new(
-        peripherals.GPIO3,
-        InputConfig::default().with_pull(Pull::Up),
-    );
-    let lower_button = Input::new(
         peripherals.GPIO4,
         InputConfig::default().with_pull(Pull::Up),
     );
+    let lower_button = Input::new(
+        peripherals.GPIO3,
+        InputConfig::default().with_pull(Pull::Up),
+    );
     let bottom_button = Input::new(
-        peripherals.GPIO5,
+        peripherals.GPIO10,
         InputConfig::default().with_pull(Pull::Up),
     );
     info!("IO initalized!");
@@ -342,7 +342,7 @@ enum Command {
 static DIR_TO_HOME: RwLock<CriticalSectionRawMutex, Level> = RwLock::new(Level::Low);
 static LAST_COMMAND: Signal<CriticalSectionRawMutex, Command> = Signal::new();
 // in percentage, if -1, current position is unknown. Should also try to replace with an atomic.
-static CURRENT_POS: Signal<CriticalSectionRawMutex, i8> = Signal::new();
+static CURRENT_POS: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 //TODO: Surely theres a way to use an atomicbool here? The main thing is we need to be able to
 //await it.
 static ERROR_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -410,7 +410,7 @@ async fn bottom_button_task(mut button: Input<'static>) {
             LAST_COMMAND.signal(Command::SetBottom);
             info!("bottom button long pushed");
         } else {
-            LAST_COMMAND.signal(Command::MoveToPos(100));
+            LAST_COMMAND.signal(Command::MoveToPos(u8::MAX));
             info!("bottom button pushed");
         }
         Timer::after_millis(50).await;

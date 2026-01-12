@@ -1,9 +1,29 @@
 [package]
 name = "iter-step-gen"
+description = "An iterator-powered stepper motor step planner"
 version = "0.1.0"
 edition = "2024"
+license = "EUPL-1.2"
+repository = "https://github.com/gabevenberg/crabroll"
+keywords = [
+    "stepper",
+    "driver",
+    "iterator"
+]
+categories = [
+    "embedded",
+    "no_std",
+    "no_std::no-alloc",
+    "science::robotics",
+]
 
 [dependencies]
 embassy-time = { version = "0.5", features = ["defmt"] }
 defmt = "1.0"
 thiserror = { version = "2.0", default-features = false }
+
+[lints.clippy]
+cargo = "warn"
+# Nothing we can do about it, just noise.
+multiple_crate_versions = { level = "allow", priority = 10 }
+pedantic = "warn"

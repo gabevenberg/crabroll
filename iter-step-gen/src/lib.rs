@@ -6,7 +6,9 @@ use core::{
     num::NonZeroU32,
 };
 
+//TODO: Move defmt stuff into crate feature.
 use defmt::Format;
+//TODO: use core::Duration instead of embassy_time duration to remove dep on embassy.
 use embassy_time::{Duration, TICK_HZ};
 use thiserror::Error;
 
@@ -57,10 +59,11 @@ pub struct Stepper {
 impl Stepper {
     ///Creates new stepper motor instance.
     ///units:
-    ///* Travel_limit: max steps from home the stepper motor can safely travel.
-    ///* max_speed: max steps/sec the stepper motor can safely rotate.
-    ///* max_accel: max steps/sec^2 the stepper motor can achieve.
-    ///* dir_to_home: the direction the motor spins when moving towards home.
+    ///* `Travel_limit`: max steps from home the stepper motor can safely travel.
+    ///* `max_speed`: max steps/sec the stepper motor can safely rotate.
+    ///* `max_accel`: max steps/sec^2 the stepper motor can achieve.
+    ///* `dir_to_home`: the direction the motor spins when moving towards home.
+    #[must_use] 
     pub const fn new(
         travel_limit: NonZeroU32,
         max_speed: NonZeroU32,
@@ -106,12 +109,12 @@ impl Stepper {
         Duration::from_hz(max_speed.get() as u64)
     }
 
-    pub fn homing_move<'a, F: FnMut() -> bool>(
-        &'a mut self,
+    pub fn homing_move<F: FnMut() -> bool>(
+        &mut self,
         endstop_fn: F,
-    ) -> HomingMove<'a, F> {
+    ) -> HomingMove<'_, F> {
         self.curent_pos = None;
-        let delay = Duration::from_ticks(TICK_HZ / (self.start_vel as u64));
+        let delay = Duration::from_ticks(TICK_HZ / u64::from(self.start_vel));
             HomingMove {
                 stepper: self,
                 delay,
@@ -121,10 +124,10 @@ impl Stepper {
     }
 
     //TODO: Refactor as a typestate for the NotHomed check?
-    pub fn planned_move<'a>(
-        &'a mut self,
+    pub fn planned_move(
+        &mut self,
         target_pos: u32,
-    ) -> Result<(PlannedMove<'a>, Direction), StepperError> {
+    ) -> Result<(PlannedMove<'_>, Direction), StepperError> {
         match self.curent_pos {
             None => Err(StepperError::NotHomed),
             Some(_) if target_pos > self.travel_limit.get() => Err(StepperError::MoveOutOfBounds),
@@ -160,14 +163,14 @@ impl Stepper {
         }
     }
 
-    pub fn continuous_jog<'a, F: FnMut() -> bool>(
-        &'a mut self,
+    pub fn continuous_jog<F: FnMut() -> bool>(
+        &mut self,
         continue_fn: F,
         dir: Direction,
-    ) -> Result<ContinuousJog<'a, F>, StepperError> {
+    ) -> Result<ContinuousJog<'_, F>, StepperError> {
         match self.curent_pos {
             Some(_) => {
-                let delay = Duration::from_ticks(TICK_HZ / (self.start_vel as u64));
+                let delay = Duration::from_ticks(TICK_HZ / u64::from(self.start_vel));
                 Ok(
                     ContinuousJog {
                         stepper: self,
@@ -182,6 +185,7 @@ impl Stepper {
     }
 
     /// Returns the travel limit of this [`Stepper`] in steps.
+    #[must_use] 
     pub fn travel_limit(&self) -> NonZeroU32 {
         self.travel_limit
     }
@@ -192,6 +196,7 @@ impl Stepper {
     }
 
     /// Returns the max speed of this [`Stepper`] in steps/sec.
+    #[must_use] 
     pub fn max_speed(&self) -> NonZeroU32 {
         self.max_speed
     }
@@ -205,6 +210,7 @@ impl Stepper {
     }
 
     /// Returns the max accel of this [`Stepper`] in steps/sec^2.
+    #[must_use] 
     pub fn max_accel(&self) -> NonZeroU32 {
         self.max_accel
     }
@@ -219,6 +225,7 @@ impl Stepper {
     }
 
     /// Returns the start vel of this [`Stepper`] in steps/sec.
+    #[must_use] 
     pub fn start_vel(&self) -> u32 {
         self.start_vel
     }
@@ -232,6 +239,7 @@ impl Stepper {
     }
 
     /// Returns the curent pos of this [`Stepper`].
+    #[must_use] 
     pub fn pos(&self) -> Option<u32> {
         self.curent_pos
     }
@@ -253,8 +261,8 @@ enum Phase {
 }
 
 /// A move towards 0 that continues until some function is true. This function is intended to poll
-/// and endstop of some kind. Once it hits the endstop, it sets pos() to zero. After the iterator
-/// ends, you can call steps_moved to get how far the stepper had to move in order to home.
+/// and endstop of some kind. Once it hits the endstop, it sets `pos()` to zero. After the iterator
+/// ends, you can call `steps_moved` to get how far the stepper had to move in order to home.
 #[derive(Format, Debug)]
 pub struct HomingMove<'a, F: FnMut() -> bool> {
     stepper: &'a mut Stepper,
@@ -263,16 +271,16 @@ pub struct HomingMove<'a, F: FnMut() -> bool> {
     steps_moved: u32,
 }
 
-impl<'a, F: FnMut() -> bool> HomingMove<'a, F> {
+impl<F: FnMut() -> bool> HomingMove<'_, F> {
     /// Returns the steps moved of this [`HomingMove<F>`].
     pub fn steps_moved(&self) -> u32 {
         self.steps_moved
     }
 }
 
-impl<'a, F: FnMut() -> bool> FusedIterator for HomingMove<'a, F> {}
+impl<F: FnMut() -> bool> FusedIterator for HomingMove<'_, F> {}
 
-impl<'a, F: FnMut() -> bool> Iterator for HomingMove<'a, F> {
+impl<F: FnMut() -> bool> Iterator for HomingMove<'_, F> {
     type Item = Duration;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -302,9 +310,9 @@ pub struct PlannedMove<'a> {
     rem: u64,
 }
 
-impl<'a> FusedIterator for PlannedMove<'a> {}
+impl FusedIterator for PlannedMove<'_> {}
 
-impl<'a> Iterator for PlannedMove<'a> {
+impl Iterator for PlannedMove<'_> {
     type Item = Duration;
 
     // TODO: For some reason the acceleration curve goes over the set acceleration sometimes? the
@@ -314,14 +322,14 @@ impl<'a> Iterator for PlannedMove<'a> {
             Phase::Accelerate => {
                 if self.steps_to_travel == 0 {
                     return None;
-                };
+                }
 
                 self.steps_to_travel -= 1;
                 self.stepper.update_pos_one_step(self.dir);
                 if self.steps_to_travel <= self.stopping_distance {
                     self.phase = Phase::Decelerate;
                     self.rem = 0;
-                };
+                }
 
                 let p = self.prev_delay.as_ticks();
                 let pdividend = p.saturating_pow(3) + self.rem;
@@ -336,8 +344,8 @@ impl<'a> Iterator for PlannedMove<'a> {
                 ));
 
                 if self.prev_delay == self.stepper.cruise_delay {
-                    self.phase = Phase::Cruise
-                };
+                    self.phase = Phase::Cruise;
+                }
 
                 Some(self.prev_delay)
             }
@@ -347,13 +355,13 @@ impl<'a> Iterator for PlannedMove<'a> {
                 if self.steps_to_travel <= self.stopping_distance {
                     self.phase = Phase::Decelerate;
                     self.rem = 0;
-                };
+                }
                 Some(self.prev_delay)
             }
             Phase::Decelerate => {
                 if self.steps_to_travel == 0 {
                     return None;
-                };
+                }
 
                 self.steps_to_travel -= 1;
                 self.stepper.update_pos_one_step(self.dir);
@@ -385,17 +393,14 @@ pub struct ContinuousJog<'a, F: FnMut() -> bool> {
     continue_fn: F,
 }
 
-impl<'a, F: FnMut() -> bool> Iterator for ContinuousJog<'a, F> {
+impl<F: FnMut() -> bool> Iterator for ContinuousJog<'_, F> {
     type Item = Duration;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match (self.continue_fn)() {
-            true => {
-                self.stepper.update_pos_one_step(self.dir);
-                Some(self.delay)
-            }
-            false => None,
-        }
+        if (self.continue_fn)() {
+            self.stepper.update_pos_one_step(self.dir);
+            Some(self.delay)
+        } else { None }
     }
 }
 

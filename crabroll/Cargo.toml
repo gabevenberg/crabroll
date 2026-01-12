@@ -2,8 +2,22 @@
 edition = "2024"
 name = "crabroll"
 description = "Stepper motor powered roller blinds that speak MQTT"
-license = "TODO"
+license = "EUPL-1.2"
 version = "0.1.0"
+repository = "https://github.com/gabevenberg/crabroll"
+readme = "../README.md"
+keywords = [
+    "iot",
+    "home-assistant",
+    "embassy",
+    "firmware",
+    "MQTT",
+]
+categories = [
+    "embedded",
+    "no_std",
+    "science::robotics",
+]
 
 [dependencies]
 iter-step-gen = { path = "../iter-step-gen" }
@@ -56,3 +70,8 @@ incremental      = false
 lto              = 'fat'
 opt-level        = 's'
 overflow-checks  = false
+
+[lints.clippy]
+cargo = "warn"
+# Nothing we can do about it, just noise.
+multiple_crate_versions = { level = "allow", priority = 10 }

@@ -5,6 +5,7 @@
     reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
     holding buffers for the duration of a data transfer."
 )]
+#![warn(clippy::all)]
 #![allow(clippy::unusual_byte_groupings)]
 
 mod motor;
@@ -90,7 +91,7 @@ async fn main(spawner: Spawner) {
     let uart = Uart::new(
         peripherals.UART0,
         Config::default()
-            .with_baudrate(115200)
+            .with_baudrate(115_200)
             .with_parity(esp_hal::uart::Parity::None),
     )
     .unwrap()

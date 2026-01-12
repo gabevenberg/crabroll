@@ -177,7 +177,7 @@ pub(crate) async fn mqtt_task(stack: Stack<'static>) {
                     Ok(Event::Publish(e)) => {
                         info!("Received Message {:?}", e);
                         if e.topic == command_topic.clone().into() {
-                            LAST_COMMAND.signal(Command::MoveToPos(u8::from_le_bytes([*e
+                            LAST_COMMAND.signal(Command::MoveToPos(i8::from_le_bytes([*e
                                 .message
                                 .first()
                                 .unwrap_or(&0)])));

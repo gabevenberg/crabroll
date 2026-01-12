@@ -65,7 +65,7 @@ mqtt:
       model: v1
       name: crabroll
     device_class: blind
-    position_closed: 255
+    position_closed: 100 
     position_open: 0
     position_template: '{{ value[0] | ord }}'
     position_topic: crabroll/test/pos

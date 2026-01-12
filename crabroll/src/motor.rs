@@ -51,7 +51,7 @@ pub(crate) async fn motor_task(
             }
             Command::MoveToPos(percent) => {
                 info!("moving to {}", percent);
-                let pos = (percent as u32 * stepper.travel_limit().get()) / u8::MAX as u32;
+                let pos = (percent as u32 * stepper.travel_limit().get()) / 100 as u32;
                 info!("moving to {}", pos);
                 match execute_move(&mut step_pin, &mut dir_pin, &mut stepper, pos).await {
                     Ok(_) => info!("moved to pos"),
@@ -63,9 +63,9 @@ pub(crate) async fn motor_task(
             }
         }
         CURRENT_POS.signal(if let Some(p) = stepper.pos() {
-            ((p * u8::MAX as u32) / stepper.travel_limit())
+            ((p * 100 as u32) / stepper.travel_limit())
                 .try_into()
-                .unwrap_or(u8::MAX)
+                .unwrap_or(100)
         } else {
             0
         });

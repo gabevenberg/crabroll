@@ -163,13 +163,13 @@ enum Command {
     StartJog(Direction),
     StopJog,
     SetBottom,
-    MoveToPos(u8),
+    MoveToPos(i8),
 }
 
 static DIR_TO_HOME: RwLock<CriticalSectionRawMutex, Level> = RwLock::new(Level::Low);
 static LAST_COMMAND: Signal<CriticalSectionRawMutex, Command> = Signal::new();
 // in percentage, if -1, current position is unknown. Should also try to replace with an atomic.
-static CURRENT_POS: Signal<CriticalSectionRawMutex, u8> = Signal::new();
+static CURRENT_POS: Signal<CriticalSectionRawMutex, i8> = Signal::new();
 //TODO: Surely theres a way to use an atomicbool here? The main thing is we need to be able to
 //await it.
 static ERROR_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -237,7 +237,7 @@ async fn bottom_button_task(mut button: Input<'static>) {
             LAST_COMMAND.signal(Command::SetBottom);
             info!("bottom button long pushed");
         } else {
-            LAST_COMMAND.signal(Command::MoveToPos(u8::MAX));
+            LAST_COMMAND.signal(Command::MoveToPos(100));
             info!("bottom button pushed");
         }
         Timer::after_millis(50).await;

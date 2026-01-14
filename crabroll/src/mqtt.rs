@@ -21,8 +21,9 @@ use crate::{CURRENT_POS, Command, LAST_COMMAND};
 
 const HOST_ID: MqttString = unsafe { MqttString::from_slice_unchecked(env!("HOST_ID")) };
 const COMMAND_TOPIC: MqttString =
-    unsafe { MqttString::from_slice_unchecked(env!("COMMAND_TOPIC")) };
-const POS_TOPIC: MqttString = unsafe { MqttString::from_slice_unchecked(env!("POS_TOPIC")) };
+    unsafe { MqttString::from_slice_unchecked(concat!(env!("MQTT_TOPIC_PREFIX"), "command")) };
+const POS_TOPIC: MqttString =
+    unsafe { MqttString::from_slice_unchecked(concat!(env!("MQTT_TOPIC_PREFIX"), "pos")) };
 const MQTT_USERNAME: MqttString =
     unsafe { MqttString::from_slice_unchecked(env!("MQTT_USERNAME")) };
 const MQTT_PASSWORD: MqttString =
@@ -67,6 +68,7 @@ pub(crate) async fn mqtt_task(stack: Stack<'static>) {
             };
             continue;
         };
+
         match client
             .connect(
                 socket,

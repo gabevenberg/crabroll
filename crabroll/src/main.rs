@@ -9,11 +9,11 @@
 #![allow(clippy::unusual_byte_groupings)]
 
 mod motor;
+mod mqtt;
 mod tmc2209;
 mod wifi;
-mod mqtt;
 
-use defmt::{info};
+use defmt::info;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_net::StackResources;
@@ -36,8 +36,8 @@ use tmc2209::Tmc2209;
 
 use crate::{
     motor::motor_task,
-    wifi::{connection, net_task},
     mqtt::mqtt_task,
+    wifi::{connection, net_task},
 };
 
 esp_bootloader_esp_idf::esp_app_desc!();

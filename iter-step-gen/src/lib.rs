@@ -63,7 +63,7 @@ impl Stepper {
     ///* `max_speed`: max steps/sec the stepper motor can safely rotate.
     ///* `max_accel`: max steps/sec^2 the stepper motor can achieve.
     ///* `dir_to_home`: the direction the motor spins when moving towards home.
-    #[must_use] 
+    #[must_use]
     pub const fn new(
         travel_limit: NonZeroU32,
         max_speed: NonZeroU32,
@@ -109,18 +109,15 @@ impl Stepper {
         Duration::from_hz(max_speed.get() as u64)
     }
 
-    pub fn homing_move<F: FnMut() -> bool>(
-        &mut self,
-        endstop_fn: F,
-    ) -> HomingMove<'_, F> {
+    pub fn homing_move<F: FnMut() -> bool>(&mut self, endstop_fn: F) -> HomingMove<'_, F> {
         self.curent_pos = None;
         let delay = Duration::from_ticks(TICK_HZ / u64::from(self.start_vel));
-            HomingMove {
-                stepper: self,
-                delay,
-                endstop_fn,
-                steps_moved: 0,
-            }
+        HomingMove {
+            stepper: self,
+            delay,
+            endstop_fn,
+            steps_moved: 0,
+        }
     }
 
     //TODO: Refactor as a typestate for the NotHomed check?
@@ -171,21 +168,19 @@ impl Stepper {
         match self.curent_pos {
             Some(_) => {
                 let delay = Duration::from_ticks(TICK_HZ / u64::from(self.start_vel));
-                Ok(
-                    ContinuousJog {
-                        stepper: self,
-                        delay,
-                        continue_fn,
-                        dir,
-                    },
-                )
+                Ok(ContinuousJog {
+                    stepper: self,
+                    delay,
+                    continue_fn,
+                    dir,
+                })
             }
             None => Err(StepperError::NotHomed),
         }
     }
 
     /// Returns the travel limit of this [`Stepper`] in steps.
-    #[must_use] 
+    #[must_use]
     pub fn travel_limit(&self) -> NonZeroU32 {
         self.travel_limit
     }
@@ -196,7 +191,7 @@ impl Stepper {
     }
 
     /// Returns the max speed of this [`Stepper`] in steps/sec.
-    #[must_use] 
+    #[must_use]
     pub fn max_speed(&self) -> NonZeroU32 {
         self.max_speed
     }
@@ -210,7 +205,7 @@ impl Stepper {
     }
 
     /// Returns the max accel of this [`Stepper`] in steps/sec^2.
-    #[must_use] 
+    #[must_use]
     pub fn max_accel(&self) -> NonZeroU32 {
         self.max_accel
     }
@@ -225,7 +220,7 @@ impl Stepper {
     }
 
     /// Returns the start vel of this [`Stepper`] in steps/sec.
-    #[must_use] 
+    #[must_use]
     pub fn start_vel(&self) -> u32 {
         self.start_vel
     }
@@ -239,7 +234,7 @@ impl Stepper {
     }
 
     /// Returns the curent pos of this [`Stepper`].
-    #[must_use] 
+    #[must_use]
     pub fn pos(&self) -> Option<u32> {
         self.curent_pos
     }
@@ -248,7 +243,11 @@ impl Stepper {
         self.curent_pos = Some(
             self.curent_pos
                 .expect("Attempted to update position while not homed.")
-                .saturating_add_signed(if dir == Direction::AwayFromHome { 1 } else { -1 }),
+                .saturating_add_signed(if dir == Direction::AwayFromHome {
+                    1
+                } else {
+                    -1
+                }),
         );
     }
 }
@@ -400,7 +399,9 @@ impl<F: FnMut() -> bool> Iterator for ContinuousJog<'_, F> {
         if (self.continue_fn)() {
             self.stepper.update_pos_one_step(self.dir);
             Some(self.delay)
-        } else { None }
+        } else {
+            None
+        }
     }
 }
 

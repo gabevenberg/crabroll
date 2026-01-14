@@ -9,6 +9,7 @@ MQTT_USERNAME="REPLACE"
 MQTT_PASSWORD="ME"
 MQTT_BROKER_IP="10.10.0.3"
 HOST_ID="crabroll-test"
+MQTT_TOPIC_PREFIX="crabroll/test/"
 COMMAND_TOPIC="crabroll/test/command"
 POS_TOPIC="crabroll/test/pos"
 

@@ -3,6 +3,7 @@ use defmt::{error, info};
 use embassy_futures::select::{Either3, select3};
 use embassy_net::{IpAddress, Stack, tcp::TcpSocket};
 use embassy_time::{Duration, Timer, WithTimeout};
+use heapless::format;
 use rust_mqtt::{
     Bytes,
     buffer::AllocBuffer,
@@ -178,11 +179,18 @@ pub(crate) async fn mqtt_task(stack: Stack<'static>) {
                 Either3::Second(Ok(header)) => match client.poll_body(header).await {
                     Ok(Event::Publish(e)) => {
                         info!("Received Message {:?}", e);
-                        if e.topic == command_topic.clone().into() {
-                            LAST_COMMAND.signal(Command::MoveToPos(i8::from_le_bytes([*e
-                                .message
-                                .first()
-                                .unwrap_or(&0)])));
+                        if e.topic == COMMAND_TOPIC {
+                            if let Ok(str) = str::from_utf8(&e.message) {
+                                if let Ok(int) = str::parse::<i8>(str) {
+                                    LAST_COMMAND.signal(Command::MoveToPos(int));
+                                } else {
+                                    error!("Received invalid number: {:?}", e.message);
+                                    break;
+                                }
+                            } else {
+                                error!("Received invalid utf-8: {:?}", e.message);
+                                break;
+                            }
                         };
                     }
                     Ok(e) => info!("Received Event {:?}", e),
@@ -192,8 +200,9 @@ pub(crate) async fn mqtt_task(stack: Stack<'static>) {
                     }
                 },
                 Either3::Third(pos) => {
-                    let pos = Bytes::Borrowed(&pos.to_le_bytes());
-                    if let Err(e) = client.publish(&pub_options, pos).await {
+                    let payload = format!(4; "{}", pos).unwrap();
+                    let payload = Bytes::Borrowed(payload.as_bytes());
+                    if let Err(e) = client.publish(&pub_options, payload).await {
                         error!("failed to publish: {:?}", e);
                         break;
                     } else {

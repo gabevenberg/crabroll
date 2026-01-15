@@ -69,9 +69,7 @@ mqtt:
     position_closed: 100 
     position_open: 0
     position_topic: crabroll/test/pos
-    position_template: '{{ value[0] | ord }}'
     set_position_topic: crabroll/test/command
-    set_position_template: '{{ pack(value, "<B") }}'
     unique_id: 01KEHE0KF2K00XCSSD2NK8PAS7_c3bfba9a3af04e1a9bbbece23a366ee8
 ```
 

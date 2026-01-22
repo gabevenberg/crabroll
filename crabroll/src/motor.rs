@@ -1,31 +1,93 @@
 use core::{iter::FusedIterator, num::NonZeroU32};
 
 use super::LAST_COMMAND;
-use crate::{CURRENT_POS, Command, DIR_TO_HOME, ERROR_SIGNAL};
+use crate::{CONFIRM_SIGNAL, CURRENT_POS, Command, DIR_TO_HOME, ERROR_SIGNAL, ErrorSeverity};
 
-use defmt::info;
+use defmt::{error, info};
+use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_time::{Duration, Instant, Timer};
+use esp_bootloader_esp_idf::partitions::{
+    self, DataPartitionSubType, PARTITION_TABLE_MAX_LEN, PartitionType,
+};
 use esp_hal::gpio::{Input, Output};
+use esp_storage::FlashStorage;
 use iter_step_gen::{Direction, Stepper, StepperError};
+use sequential_storage::{
+    cache::NoCache,
+    map::{MapConfig, MapStorage},
+};
 
-const TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(2048).unwrap();
+const DEFAULT_TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(2048).unwrap();
 const MAX_VEL: NonZeroU32 = NonZeroU32::new(2048).unwrap();
 const MAX_ACCEL: NonZeroU32 = NonZeroU32::new(225).unwrap();
 const START_VEL: u32 = 64;
+
+// storage consts
+const TRAVEL_LIMIT_KEY: u8 = 0;
 
 #[embassy_executor::task]
 pub(crate) async fn motor_task(
     mut step_pin: Output<'static>,
     mut dir_pin: Output<'static>,
     endstop_pin: Input<'static>,
+    mut flash: FlashStorage<'static>,
 ) {
-    let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL);
+    let mut pt_mem = [0u8; PARTITION_TABLE_MAX_LEN];
+    let pt = partitions::read_partition_table(&mut flash, &mut pt_mem).unwrap();
+    let nvs = pt
+        .find_partition(PartitionType::Data(DataPartitionSubType::Nvs))
+        .unwrap()
+        .unwrap();
+    let partition = nvs.as_embedded_storage(&mut flash);
+    let mut flash = MapStorage::<u8, _, _>::new(
+        BlockingAsync::new(partition),
+        MapConfig::new(0x0000..0x6000),
+        NoCache::new(),
+    );
+
+    let mut flash_buffer = [0u8; 4096];
+    let travel_limit = match flash
+        .fetch_item::<u32>(&mut flash_buffer, &TRAVEL_LIMIT_KEY)
+        .await
+    {
+        Ok(Some(l)) => {
+            CONFIRM_SIGNAL.signal(());
+            NonZeroU32::new(l).unwrap()
+        }
+        Ok(None) => {
+            match flash
+                .store_item(
+                    &mut flash_buffer,
+                    &TRAVEL_LIMIT_KEY,
+                    &DEFAULT_TRAVEL_LIMIT.get(),
+                )
+                .await
+            {
+                Ok(()) => {
+                    CONFIRM_SIGNAL.signal(());
+                }
+                Err(_) => {
+                    error!("Error storing item in flash");
+                    ERROR_SIGNAL.signal(ErrorSeverity::Hard);
+                }
+            };
+            DEFAULT_TRAVEL_LIMIT
+        }
+        Err(_) => {
+            error!("Error getting item in flash");
+            ERROR_SIGNAL.signal(ErrorSeverity::Hard);
+            DEFAULT_TRAVEL_LIMIT
+        }
+    };
+
+    let mut stepper = Stepper::new(travel_limit, MAX_VEL, MAX_ACCEL, START_VEL);
     execute_home(&mut step_pin, &mut dir_pin, &mut stepper, &endstop_pin).await;
     loop {
         match LAST_COMMAND.wait().await {
             Command::Home => {
                 info!("homing");
                 execute_home(&mut step_pin, &mut dir_pin, &mut stepper, &endstop_pin).await;
+                CONFIRM_SIGNAL.signal(());
                 info!("homed");
             }
             Command::StartJog(direction) => {
@@ -34,7 +96,7 @@ pub(crate) async fn motor_task(
                     Ok(_) => info!("jogged"),
                     Err(e) => {
                         info!("Error: {}", e);
-                        ERROR_SIGNAL.signal(());
+                        ERROR_SIGNAL.signal(ErrorSeverity::Soft);
                     }
                 };
             }
@@ -44,9 +106,19 @@ pub(crate) async fn motor_task(
                     info!("Setting current position as bottom");
                     let pos = NonZeroU32::new(pos).unwrap_or(NonZeroU32::MIN);
                     stepper.set_travel_limit(pos);
+                    match flash
+                        .store_item(&mut flash_buffer, &TRAVEL_LIMIT_KEY, &pos.get())
+                        .await
+                    {
+                        Ok(()) => CONFIRM_SIGNAL.signal(()),
+                        Err(_) => {
+                            error!("Error storing item in flash");
+                            ERROR_SIGNAL.signal(ErrorSeverity::Hard);
+                        }
+                    };
                 } else {
                     info!("Attempted to set travel limit while unhomed");
-                    ERROR_SIGNAL.signal(());
+                    ERROR_SIGNAL.signal(ErrorSeverity::Soft);
                 }
             }
             Command::MoveToPos(percent) => {
@@ -57,7 +129,7 @@ pub(crate) async fn motor_task(
                     Ok(_) => info!("moved to pos"),
                     Err(e) => {
                         info!("Error: {}", e);
-                        ERROR_SIGNAL.signal(());
+                        ERROR_SIGNAL.signal(ErrorSeverity::Soft);
                     }
                 };
             }

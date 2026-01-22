@@ -56,6 +56,9 @@ embassy-sync = { version = "0.7", features = ["defmt"] }
 rust-mqtt = { version = "0.4", features = ["defmt"] }
 esp-radio = { version = "0.17", features = ["esp32c3", "wifi", "defmt"] }
 embassy-futures = { version = "0.1.2", features = ["defmt"] }
+sequential-storage = { version = "7.1.0", features = ["defmt", "heapless"] }
+esp-storage = { version = "0.8.1", features = ["defmt", "esp32c3", "esp-hal"] }
+embassy-embedded-hal = { version = "0.5.0", features = ["defmt"] }
 
 [profile.dev]
 # Rust debug is too slow.

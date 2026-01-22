@@ -82,6 +82,12 @@ as that will cause Crabroll to lose track of its position.
 Crabroll does come with a 4 button physical interface for cases when Home Assistant is unavailable or inconvenient.
 The topmost button (with the barrel jack side being the bottom) will open the blinds when short pressed,
 and will initiate the homing procedure when pressed for more than a second.
+The green LED will flash when homing is finished.
 The middle-top button and middle-bottom button will jog the blinds up and down, respectively.
 The bottommost button will close the blinds fully when short pressed,
-and when long pressed will set the current position as the bottom position.
+and when long pressed will set the current position as the bottom position and if storage is sucsessful, the green LED will flash.
+
+On boot, the green LED will flash once after confirming flash storage is working.
+
+In the case of an error, the red LED will flash, and depending on the error, Crabroll may reboot.
+If caught in a bootloop, either the esp32 is dying, or there is a bug, and you should file an issue.

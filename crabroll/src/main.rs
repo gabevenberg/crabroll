@@ -13,7 +13,7 @@ mod mqtt;
 mod tmc2209;
 mod wifi;
 
-use defmt::info;
+use defmt::{Format, info};
 use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_net::StackResources;
@@ -24,11 +24,13 @@ use esp_hal::{
     clock::CpuClock,
     gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
     interrupt::{Priority, software::SoftwareInterruptControl},
+    system::software_reset,
     timer::systimer::SystemTimer,
     uart::{Config, Uart},
 };
 use esp_radio::Controller;
 use esp_rtos::embassy::InterruptExecutor;
+use esp_storage::FlashStorage;
 use iter_step_gen::Direction;
 use panic_rtt_target as _;
 use static_cell::StaticCell;
@@ -86,6 +88,9 @@ async fn main(spawner: Spawner) {
         peripherals.GPIO10,
         InputConfig::default().with_pull(Pull::Up),
     );
+
+    let flash = FlashStorage::new(peripherals.FLASH);
+
     info!("IO initalized!");
 
     let uart = Uart::new(
@@ -128,8 +133,9 @@ async fn main(spawner: Spawner) {
     spawner.spawn(lower_button_task(lower_button)).unwrap();
     spawner.spawn(bottom_button_task(bottom_button)).unwrap();
     spawner.spawn(error_led_task(red_led_pin)).unwrap();
+    spawner.spawn(confirm_led_task(green_led_pin)).unwrap();
     step_spawner
-        .spawn(motor_task(step_pin, dir_pin, endstop_pin))
+        .spawn(motor_task(step_pin, dir_pin, endstop_pin, flash))
         .unwrap();
 
     info!("Motor tasks spawned!");
@@ -167,20 +173,43 @@ enum Command {
     MoveToPos(i8),
 }
 
+#[derive(Eq, PartialEq, Format)]
+enum ErrorSeverity {
+    Soft,
+    Hard,
+}
+
 static DIR_TO_HOME: RwLock<CriticalSectionRawMutex, Level> = RwLock::new(Level::Low);
 static LAST_COMMAND: Signal<CriticalSectionRawMutex, Command> = Signal::new();
 // in percentage, if -1, current position is unknown. Should also try to replace with an atomic.
 static CURRENT_POS: Signal<CriticalSectionRawMutex, i8> = Signal::new();
 //TODO: Surely theres a way to use an atomicbool here? The main thing is we need to be able to
 //await it.
-static ERROR_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static ERROR_SIGNAL: Signal<CriticalSectionRawMutex, ErrorSeverity> = Signal::new();
+static CONFIRM_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 #[embassy_executor::task]
 async fn error_led_task(mut led: Output<'static>) {
-    ERROR_SIGNAL.wait().await;
-    led.set_high();
-    Timer::after_secs(1).await;
-    led.set_low();
+    loop {
+        let error = ERROR_SIGNAL.wait().await;
+        led.set_high();
+        Timer::after_secs(1).await;
+        led.set_low();
+        match error {
+            ErrorSeverity::Soft => (),
+            ErrorSeverity::Hard => software_reset(),
+        }
+    }
+}
+
+#[embassy_executor::task]
+async fn confirm_led_task(mut led: Output<'static>) {
+    loop {
+        CONFIRM_SIGNAL.wait().await;
+        led.set_high();
+        Timer::after_secs(1).await;
+        led.set_low();
+    }
 }
 
 #[embassy_executor::task]

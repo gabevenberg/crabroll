@@ -2,7 +2,7 @@
 protocol="Jtag"
 
 [default.general]
-chip = "esp32c3" # uncomment this line for micro:bit V2
+chip = "esp32c3"
 
 [default.flashing]
 enabled=true

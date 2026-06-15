@@ -407,11 +407,12 @@ impl<F: FnMut() -> bool> Iterator for ContinuousJog<'_, F> {
 
 #[cfg(test)]
 mod test {
+    #![allow(clippy::cast_precision_loss)]
     use core::num::NonZeroU32;
 
     use embassy_time::{Duration, TICK_HZ};
 
-    use crate::{Direction, Stepper, StepperError};
+    use crate::{Stepper, StepperError};
 
     const TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(2048).unwrap();
     const MAX_VEL: NonZeroU32 = NonZeroU32::new(255).unwrap();
@@ -427,7 +428,7 @@ mod test {
         let steps = stepper.homing_move(|| endstop.next().unwrap());
 
         for step in steps {
-            assert_eq!(step, Duration::from_hz(START_VEL as u64));
+            assert_eq!(step, Duration::from_hz(u64::from(START_VEL)));
             println!("{}", (TICK_HZ / step.as_ticks()));
         }
         assert_eq!(stepper.curent_pos, Some(0));
@@ -499,14 +500,14 @@ mod test {
             // (which requires a square root), we sometimes go up 1% over our max acceleration.
             // Also, for some reason there are single-step spikes, but they dissapear when taking a
             // 2 step moving average.
-            assert!(avg.abs() <= MAX_ACCEL.get() as f64 + (MAX_ACCEL.get() as f64 / 1.0));
+            assert!(avg.abs() <= f64::from(MAX_ACCEL.get()) + (f64::from(MAX_ACCEL.get()) / 1.0));
 
             time += step;
             prev_step = step.as_ticks();
         }
 
         let final_vel = TICK_HZ as f64 / prev_step as f64;
-        let final_accel = (stepper.start_vel as f64 - final_vel) * final_vel;
+        let final_accel = (f64::from(stepper.start_vel) - final_vel) * final_vel;
         accels[accel_indx] = final_accel;
         let avg: f64 = accels.iter().sum::<f64>() / accels.len() as f64;
         println!(
@@ -518,7 +519,7 @@ mod test {
             avg,
         );
 
-        assert!(final_accel.abs() <= MAX_ACCEL.get() as f64 + 1.0);
+        assert!(final_accel.abs() <= f64::from(MAX_ACCEL.get()) + 1.0);
         assert_eq!(stepper.curent_pos, Some(TRAVEL_LIMIT.get()));
     }
 
@@ -557,14 +558,14 @@ mod test {
             // (which requires a square root), we sometimes go up 1% over our max acceleration.
             // Also, for some reason there are single-step spikes, but they dissapear when taking a
             // 2 step moving average.
-            assert!(avg.abs() <= MAX_ACCEL.get() as f64 + (MAX_ACCEL.get() as f64 / 1.0));
+            assert!(avg.abs() <= f64::from(MAX_ACCEL.get()) + (f64::from(MAX_ACCEL.get()) / 1.0));
 
             time += step;
             prev_step = step.as_ticks();
         }
 
         let final_vel = TICK_HZ as f64 / prev_step as f64;
-        let final_accel = (stepper.start_vel as f64 - final_vel) * final_vel;
+        let final_accel = (f64::from(stepper.start_vel) - final_vel) * final_vel;
         accels[accel_indx] = final_accel;
         let avg: f64 = accels.iter().sum::<f64>() / accels.len() as f64;
         println!(
@@ -576,7 +577,7 @@ mod test {
             avg,
         );
 
-        assert!(final_accel.abs() <= MAX_ACCEL.get() as f64 + 1.0);
+        assert!(final_accel.abs() <= f64::from(MAX_ACCEL.get()) + 1.0);
         assert_eq!(stepper.curent_pos, Some(MAX_ACCEL.get()));
     }
 }

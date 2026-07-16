@@ -1,4 +1,4 @@
-use core::net::Ipv4Addr;
+use core::{net::Ipv4Addr, num::NonZero};
 use defmt::{error, info};
 use embassy_futures::select::{Either3, select3};
 use embassy_net::{IpAddress, Stack, tcp::TcpSocket};
@@ -11,26 +11,24 @@ use rust_mqtt::{
         Client,
         event::{Event, Suback},
         options::{
-            ConnectOptions, PublicationOptions, RetainHandling, SubscriptionOptions, WillOptions,
+            ConnectOptions, PublicationOptions, RetainHandling, SubscriptionOptions,
+            TopicReference, WillOptions,
         },
     },
-    config::{KeepAlive, SessionExpiryInterval},
-    types::{MqttBinary, MqttString, QoS, TopicName},
+    config::{KeepAlive, MaximumPacketSize, SessionExpiryInterval},
+    types::{MqttBinary, MqttString, QoS, TopicFilter, TopicName},
 };
 
+use super::config::CONFIG;
 use crate::{CURRENT_POS, Command, LAST_COMMAND};
 
-const HOST_ID: MqttString = unsafe { MqttString::from_slice_unchecked(env!("HOST_ID")) };
-const COMMAND_TOPIC: MqttString =
-    unsafe { MqttString::from_slice_unchecked(concat!(env!("MQTT_TOPIC_PREFIX"), "command")) };
-const POS_TOPIC: MqttString =
-    unsafe { MqttString::from_slice_unchecked(concat!(env!("MQTT_TOPIC_PREFIX"), "pos")) };
-const MQTT_USERNAME: MqttString =
-    unsafe { MqttString::from_slice_unchecked(env!("MQTT_USERNAME")) };
-const MQTT_PASSWORD: MqttString =
-    unsafe { MqttString::from_slice_unchecked(env!("MQTT_PASSWORD")) };
-const MQTT_BROKER_IP: &str = env!("MQTT_BROKER_IP");
-const KEEPALIVE_TIME: u16 = 60;
+const HOST_ID: MqttString = MqttString::from_str_unchecked(CONFIG.mqtt.host_id);
+const COMMAND_TOPIC: MqttString = MqttString::from_str_unchecked(CONFIG.mqtt.topics.command);
+const POS_TOPIC: MqttString = MqttString::from_str_unchecked(CONFIG.mqtt.topics.position);
+const MQTT_USERNAME: MqttString = MqttString::from_str_unchecked(CONFIG.mqtt.username);
+const MQTT_PASSWORD: MqttString = MqttString::from_str_unchecked(CONFIG.mqtt.password);
+const MQTT_BROKER_IP: &str = CONFIG.mqtt.broker_ip;
+const KEEPALIVE_TIME: NonZero<u16> = NonZero::new(60).unwrap();
 
 // TODO: this is messy, needs better error handling.
 #[embassy_executor::task]
@@ -59,7 +57,7 @@ pub(crate) async fn mqtt_task(stack: Stack<'static>) {
 
         let mut buffer = AllocBuffer;
 
-        let mut client = Client::<_, _, 5, 3, 3>::new(&mut buffer);
+        let mut client = Client::<_, _, 5, 3, 3, 5>::new(&mut buffer);
         let addr: IpAddress = MQTT_BROKER_IP.parse::<Ipv4Addr>().unwrap().into();
         if let Err(e) = socket.connect((addr, 1883)).await {
             error!("Error connecting to mqtt server: {}", e);
@@ -77,22 +75,26 @@ pub(crate) async fn mqtt_task(stack: Stack<'static>) {
                     clean_start: false,
                     keep_alive: KeepAlive::Seconds(KEEPALIVE_TIME),
                     session_expiry_interval: SessionExpiryInterval::Seconds(
-                        (KEEPALIVE_TIME * 2).into(),
+                        (KEEPALIVE_TIME.get() * 2).into(),
                     ),
                     user_name: Some(MQTT_USERNAME),
                     password: Some(MQTT_PASSWORD.into()),
                     will: Some(WillOptions {
                         will_qos: QoS::ExactlyOnce,
                         will_retain: true,
-                        will_topic: MqttString::try_from("crabroll-dead").unwrap(),
-                        will_payload: MqttBinary::try_from("crabroll died :(").unwrap(),
+                        will_topic: TopicName::new_unchecked(MqttString::from_str_unchecked(
+                            "crabroll-dead",
+                        )),
                         will_delay_interval: 10,
-                        is_payload_utf8: true,
                         message_expiry_interval: Some(20),
                         content_type: Some(MqttString::try_from("txt").unwrap()),
                         response_topic: None,
                         correlation_data: None,
+                        payload_format_indicator: None,
+                        will_message: MqttBinary::from_slice_unchecked(b"crabroll died :("),
                     }),
+                    maximum_packet_size: MaximumPacketSize::Limit(NonZero::new(2048).unwrap()),
+                    request_response_information: false,
                 },
                 Some(HOST_ID),
             )
@@ -119,20 +121,26 @@ pub(crate) async fn mqtt_task(stack: Stack<'static>) {
             retain_as_published: true,
             no_local: false,
             qos: QoS::ExactlyOnce,
+            subscription_identifier: None,
         };
 
         // saftey: The string is static, we know it is the correct syntax. Also, since this is not a
         // memory saftey issue, I disagree this function needs to be unsafe at all.
-        let command_topic = unsafe { TopicName::new_unchecked(COMMAND_TOPIC) };
-        let pos_topic = unsafe { TopicName::new_unchecked(POS_TOPIC) };
+        let command_topic = TopicName::new_unchecked(COMMAND_TOPIC);
+        let pos_topic = TopicReference::Name(TopicName::new_unchecked(POS_TOPIC));
 
         let pub_options = PublicationOptions {
             retain: true,
             topic: pos_topic,
             qos: QoS::AtMostOnce,
+            payload_format_indicator: Some(true),
+            message_expiry_interval: None,
+            response_topic: None,
+            correlation_data: None,
+            content_type: None,
         };
         client
-            .subscribe(command_topic.clone().into(), sub_options)
+            .subscribe(TopicFilter::new_unchecked(COMMAND_TOPIC), sub_options)
             .await
             .unwrap();
 
@@ -158,7 +166,7 @@ pub(crate) async fn mqtt_task(stack: Stack<'static>) {
         };
         loop {
             match select3(
-                Timer::after_secs(KEEPALIVE_TIME.into()),
+                Timer::after_secs(KEEPALIVE_TIME.get().into()),
                 client.poll_header(),
                 CURRENT_POS.wait(),
             )
@@ -179,7 +187,7 @@ pub(crate) async fn mqtt_task(stack: Stack<'static>) {
                 Either3::Second(Ok(header)) => match client.poll_body(header).await {
                     Ok(Event::Publish(e)) => {
                         info!("Received Message {:?}", e);
-                        if e.topic == COMMAND_TOPIC {
+                        if e.topic == command_topic {
                             if let Ok(str) = str::from_utf8(&e.message) {
                                 if let Ok(int) = str::parse::<i8>(str) {
                                     LAST_COMMAND.signal(Command::MoveToPos(int));

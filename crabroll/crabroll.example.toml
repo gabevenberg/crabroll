@@ -1,0 +1,13 @@
+[wifi]
+ssid="REPLACE"
+password="ME"
+
+[mqtt]
+username="REPLACE"
+password="ME"
+broker_ip="10.10.0.3"
+host_id="crabroll-test"
+
+[mqtt.topics]
+command="crabroll/test/command"
+position="crabroll/test/pos"

@@ -43,11 +43,10 @@ Then,
     You don't need to worry about having specific cross-compilation toolchains,
     the included `rust-toolchain.toml` file will take care of that for you.
     Also, if you use Nix flakes, I include a flake.nix with a devshell, so you can just run `nix shell`.
-2. (optional) Edit `./crabroll/.cargo/config.toml`, editing the environment variables within to configure Crabroll.
+2. Copy `./crabroll/crabroll.example.toml` to `./crabroll/crabroll.toml`, and edit the values to match your environment.
+   This means wifi SSID and password, MQTT credentials, and MQTT topics.
 3. Still in the `crabroll` directory, and with your board plugged in via USB, run `cargo embed --release`.
     This will build Crabroll and flash it to the board.
-    If you don't want to edit `config.toml` to avoid accidentally committing secrets to git,
-    you can prepend environment variables to your command invocation, like this: `SSID=test PASSWORD=password cargo embed --release`.
 
 ## Home Assistant:
 

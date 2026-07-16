@@ -13,6 +13,7 @@ mod mqtt;
 mod tmc2209;
 mod wifi;
 
+use concrete_config::concrete_toml;
 use defmt::{Format, info};
 use defmt_rtt as _;
 use embassy_executor::Spawner;
@@ -28,7 +29,7 @@ use esp_hal::{
     timer::systimer::SystemTimer,
     uart::{Config, Uart},
 };
-use esp_radio::Controller;
+use esp_radio::wifi::{ControllerConfig, sta::StationConfig};
 use esp_rtos::embassy::InterruptExecutor;
 use esp_storage::FlashStorage;
 use iter_step_gen::Direction;
@@ -41,6 +42,33 @@ use crate::{
     mqtt::mqtt_task,
     wifi::{connection, net_task},
 };
+
+#[concrete_toml("./crabroll.toml")]
+mod config {
+    #[root]
+    pub struct Config {
+        pub wifi: Wifi,
+        pub mqtt: Mqtt,
+    }
+
+    pub struct Wifi {
+        pub ssid: &'static str,
+        pub password: &'static str,
+    }
+
+    pub struct Mqtt {
+        pub username: &'static str,
+        pub password: &'static str,
+        pub broker_ip: &'static str,
+        pub host_id: &'static str,
+        pub topics: Topics,
+    }
+
+    pub struct Topics {
+        pub command: &'static str,
+        pub position: &'static str,
+    }
+}
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -128,25 +156,29 @@ async fn main(spawner: Spawner) {
         .await
         .unwrap();
 
-    spawner.spawn(home_button_task(home_button)).unwrap();
-    spawner.spawn(raise_button_task(raise_button)).unwrap();
-    spawner.spawn(lower_button_task(lower_button)).unwrap();
-    spawner.spawn(bottom_button_task(bottom_button)).unwrap();
-    spawner.spawn(error_led_task(red_led_pin)).unwrap();
-    spawner.spawn(confirm_led_task(green_led_pin)).unwrap();
-    step_spawner
-        .spawn(motor_task(step_pin, dir_pin, endstop_pin, flash))
-        .unwrap();
+    spawner.spawn(home_button_task(home_button).unwrap());
+    spawner.spawn(raise_button_task(raise_button).unwrap());
+    spawner.spawn(lower_button_task(lower_button).unwrap());
+    spawner.spawn(bottom_button_task(bottom_button).unwrap());
+    spawner.spawn(error_led_task(red_led_pin).unwrap());
+    spawner.spawn(confirm_led_task(green_led_pin).unwrap());
+    step_spawner.spawn(motor_task(step_pin, dir_pin, endstop_pin, flash).unwrap());
 
     info!("Motor tasks spawned!");
 
-    static RADIO_CONTROLLER: StaticCell<Controller> = StaticCell::new();
-    let radio_controller = RADIO_CONTROLLER.init_with(|| esp_radio::init().unwrap());
+    let station_config = esp_radio::wifi::Config::Station(
+        StationConfig::default()
+            .with_ssid(config::CONFIG.wifi.ssid)
+            .with_password(config::CONFIG.wifi.password.into()),
+    );
 
-    let (controller, interfaces) =
-        esp_radio::wifi::new(radio_controller, peripherals.WIFI, Default::default()).unwrap();
+    let (controller, interfaces) = esp_radio::wifi::new(
+        peripherals.WIFI,
+        ControllerConfig::default().with_initial_config(station_config),
+    )
+    .unwrap();
 
-    let wifi_interface = interfaces.sta;
+    let wifi_station = interfaces.station;
 
     let config = embassy_net::Config::dhcpv4(Default::default());
 
@@ -157,11 +189,11 @@ async fn main(spawner: Spawner) {
     let stack_resources = STACK_RESOURCES.init_with(StackResources::<3>::new);
 
     // Init network stack
-    let (stack, runner) = embassy_net::new(wifi_interface, config, stack_resources, seed);
+    let (stack, runner) = embassy_net::new(wifi_station, config, stack_resources, seed);
 
-    spawner.spawn(connection(controller)).unwrap();
-    spawner.spawn(net_task(runner)).unwrap();
-    spawner.spawn(mqtt_task(stack)).unwrap();
+    spawner.spawn(connection(controller).unwrap());
+    spawner.spawn(net_task(runner).unwrap());
+    spawner.spawn(mqtt_task(stack).unwrap());
 }
 
 #[derive(Eq, PartialEq)]

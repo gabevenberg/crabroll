@@ -13,7 +13,7 @@ use esp_hal::gpio::{Input, Output};
 use esp_storage::FlashStorage;
 use iter_step_gen::{Direction, Stepper, StepperError};
 use sequential_storage::{
-    cache::NoCache,
+    cache::Cache,
     map::{MapConfig, MapStorage},
 };
 
@@ -42,7 +42,7 @@ pub(crate) async fn motor_task(
     let mut flash = MapStorage::<u8, _, _>::new(
         BlockingAsync::new(partition),
         MapConfig::new(0x0000..0x6000),
-        NoCache::new(),
+        Cache::new_uncached(),
     );
 
     let mut flash_buffer = [0u8; 4096];

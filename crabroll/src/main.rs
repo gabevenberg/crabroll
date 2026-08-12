@@ -152,7 +152,7 @@ async fn main(spawner: Spawner) {
 
     // set current limiting
     tmc2209
-        .write_register(0, 0x10, 0b0000_10000_00000)
+        .write_register(0, 0x10, 0b0000_000_11111_000_00000)
         .await
         .unwrap();
 

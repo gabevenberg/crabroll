@@ -18,8 +18,8 @@ use sequential_storage::{
 };
 
 const DEFAULT_TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(2048).unwrap();
-const MAX_VEL: NonZeroU32 = NonZeroU32::new(225).unwrap();
-const MAX_ACCEL: NonZeroU32 = NonZeroU32::new(128).unwrap();
+const MAX_VEL: NonZeroU32 = NonZeroU32::new(128).unwrap();
+const MAX_ACCEL: NonZeroU32 = NonZeroU32::new(64).unwrap();
 const START_VEL: u32 = 64;
 
 // storage consts

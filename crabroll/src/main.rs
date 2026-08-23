@@ -138,7 +138,7 @@ async fn main(spawner: Spawner) {
         .unwrap();
 
     // setup general config
-    tmc2209.write_register(0, 0, 0b0111000001).await.unwrap();
+    tmc2209.write_register(0, 0, 0b0111000100).await.unwrap();
 
     // set microstepping to fullstep
     tmc2209
@@ -152,7 +152,7 @@ async fn main(spawner: Spawner) {
 
     // set current limiting
     tmc2209
-        .write_register(0, 0x10, 0b0000_000_11111_000_00000)
+        .write_register(0, 0x10, 0b1111_000_11000_000_00000)
         .await
         .unwrap();
 

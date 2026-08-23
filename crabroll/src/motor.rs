@@ -21,6 +21,7 @@ const DEFAULT_TRAVEL_LIMIT: NonZeroU32 = NonZeroU32::new(2048).unwrap();
 const MAX_VEL: NonZeroU32 = NonZeroU32::new(128).unwrap();
 const MAX_ACCEL: NonZeroU32 = NonZeroU32::new(64).unwrap();
 const START_VEL: u32 = 64;
+const BACKLASH_COMP: u32 = 10;
 
 // storage consts
 const TRAVEL_LIMIT_KEY: u8 = 0;
@@ -89,17 +90,23 @@ pub(crate) async fn motor_task(
                 execute_home(&mut step_pin, &mut dir_pin, &mut stepper, &endstop_pin).await;
                 CONFIRM_SIGNAL.signal(());
                 info!("homed");
+                update_pos(&stepper);
             }
             Command::StartJog(direction) => {
                 info!("jogging in {} direction", direction);
                 match execute_jog(&mut step_pin, &mut dir_pin, &mut stepper, direction).await {
-                    Ok(_) => info!("jogged"),
+                    Ok(_) => {
+                        info!("jogged");
+                        update_pos(&stepper);
+                        compensate_backlash(&mut stepper, &mut step_pin, &mut dir_pin).await;
+                    }
                     Err(e) => {
                         info!("Error: {}", e);
                         ERROR_SIGNAL.signal(ErrorSeverity::Soft);
                     }
                 };
             }
+            // should be unreachable.
             Command::StopJog => (),
             Command::SetBottom => {
                 if let Some(pos) = stepper.pos() {
@@ -116,6 +123,7 @@ pub(crate) async fn motor_task(
                             ERROR_SIGNAL.signal(ErrorSeverity::Hard);
                         }
                     };
+                    update_pos(&stepper);
                 } else {
                     info!("Attempted to set travel limit while unhomed");
                     ERROR_SIGNAL.signal(ErrorSeverity::Soft);
@@ -126,7 +134,11 @@ pub(crate) async fn motor_task(
                 let pos = (percent as u32 * stepper.travel_limit().get()) / 100_u32;
                 info!("moving to {}", pos);
                 match execute_move(&mut step_pin, &mut dir_pin, &mut stepper, pos).await {
-                    Ok(_) => info!("moved to pos"),
+                    Ok(_) => {
+                        info!("moved to pos");
+                        update_pos(&stepper);
+                        compensate_backlash(&mut stepper, &mut step_pin, &mut dir_pin).await;
+                    }
                     Err(e) => {
                         info!("Error: {}", e);
                         ERROR_SIGNAL.signal(ErrorSeverity::Soft);
@@ -134,14 +146,33 @@ pub(crate) async fn motor_task(
                 };
             }
         }
-        CURRENT_POS.signal(if let Some(p) = stepper.pos() {
-            ((p * 100_u32) / stepper.travel_limit())
-                .try_into()
-                .unwrap_or(100)
-        } else {
-            0
-        });
     }
+}
+
+async fn compensate_backlash<'a>(
+    stepper: &mut Stepper,
+    step_pin: &mut Output<'a>,
+    dir_pin: &mut Output<'a>,
+) {
+    if let Some(p) = stepper.pos() {
+        match execute_move(step_pin, dir_pin, stepper, p.saturating_sub(BACKLASH_COMP)).await {
+            Ok(_) => info!("let out backlash"),
+            Err(e) => {
+                info!("Error: {}", e);
+                ERROR_SIGNAL.signal(ErrorSeverity::Soft);
+            }
+        };
+    };
+}
+
+fn update_pos(stepper: &Stepper) {
+    CURRENT_POS.signal(if let Some(p) = stepper.pos() {
+        ((p * 100_u32) / stepper.travel_limit())
+            .try_into()
+            .unwrap_or(100)
+    } else {
+        0
+    });
 }
 
 async fn execute_home<'a>(
@@ -201,10 +232,10 @@ async fn execute_step_plan<'a>(
     plan: impl FusedIterator<Item = Duration>,
 ) {
     for delay in plan {
-        let now = Instant::now();
+        let timer = Timer::after(delay);
         step_pin.set_high();
         Timer::after_nanos(100).await;
         step_pin.set_low();
-        Timer::at(now.saturating_add(delay)).await;
+        timer.await
     }
 }

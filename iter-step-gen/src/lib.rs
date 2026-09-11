@@ -90,7 +90,9 @@ impl Stepper {
     }
 
     const fn compute_inital_delay(start_vel: u32, max_accel: NonZeroU32) -> u64 {
-        TICK_HZ / ((start_vel as u64).pow(2) + 2 * max_accel.get() as u64).isqrt()
+        // p1 = F/sqrt(v0^2 + 2a), evaluated as sqrt(F^2/(v0^2 + 2a)) so the speed is not rounded
+        // down to a whole step/sec before the division.
+        (TICK_HZ.pow(2) / ((start_vel as u64).pow(2) + 2 * max_accel.get() as u64)).isqrt()
     }
 
     const fn compute_max_stopping_distance(
@@ -309,13 +311,26 @@ pub struct PlannedMove<'a> {
     rem: u64,
 }
 
+impl PlannedMove<'_> {
+    /// One LeibRamp update.
+    /// Takes the current delay period in ticks,
+    /// carries the remainder forward,
+    /// and returns the magnitude of the change in delay period.
+    /// Subtract it to accelerate and adds it to decelerate.
+    fn ramp_step(&mut self, p: u64) -> u64 {
+        let pdividend = p.saturating_pow(3) + self.rem;
+        self.rem = pdividend % self.stepper.accel_divisor;
+        pdividend / self.stepper.accel_divisor
+    }
+}
+
 impl FusedIterator for PlannedMove<'_> {}
 
 impl Iterator for PlannedMove<'_> {
     type Item = Duration;
 
-    // TODO: For some reason the acceleration curve goes over the set acceleration sometimes? the
-    // output is 'jagged'...
+    // TODO: For some reason the acceleration curve goes over the set acceleration sometimes?
+    // the output is 'jagged'...
     fn next(&mut self) -> Option<Self::Item> {
         match self.phase {
             Phase::Accelerate => {
@@ -331,9 +346,7 @@ impl Iterator for PlannedMove<'_> {
                 }
 
                 let p = self.prev_delay.as_ticks();
-                let pdividend = p.saturating_pow(3) + self.rem;
-                let pdiff = pdividend / self.stepper.accel_divisor;
-                self.rem = pdividend % self.stepper.accel_divisor;
+                let pdiff = self.ramp_step(p);
                 self.prev_delay = Duration::from_ticks(min(
                     max(
                         p.saturating_sub(pdiff),
@@ -366,9 +379,7 @@ impl Iterator for PlannedMove<'_> {
                 self.stepper.update_pos_one_step(self.dir);
 
                 let p = self.prev_delay.as_ticks();
-                let pdividend = p.saturating_pow(3) + self.rem;
-                let pdiff = pdividend / self.stepper.accel_divisor;
-                self.rem = pdividend % self.stepper.accel_divisor;
+                let pdiff = self.ramp_step(p);
                 self.prev_delay = Duration::from_ticks(min(
                     max(
                         p.saturating_add(pdiff),

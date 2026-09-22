@@ -26,8 +26,8 @@ pub enum Direction {
     AwayFromHome,
 }
 
-// a trapezoidal stepper planner that implements the algorithm described
-// [here](http://hwml.com/LeibRamp.pdf), heavily modified for use with integer math.
+// a trapezoidal stepper planner that implements the algorithm described [here](http://hwml.com/LeibRamp.pdf),
+// heavily modified for use with integer math.
 // the modifications are explained in the IntLeibRamp.typ file in this package.
 
 ///Trapezoidal stepper planner.
@@ -44,25 +44,27 @@ pub struct Stepper {
     // steps/sec (this is the velocity the stepper motor instantly jumps to from rest and instantly
     // stops when it reaches it.)
     start_vel: u32,
-    // Direction to home in.
-    curent_pos: Option<u32>,
-    // precomputed maximum stopping distance
+    // in steps from home. (None until homed)
+    current_pos: Option<u32>,
+    // precomputed length of the deceleration ramp, in steps.
     max_stopping_distance: u32,
+    // precomputed length of the acceleration ramp, in steps.
+    max_accel_distance: u32,
     // delay between steps when at max speed.
     cruise_delay: Duration,
-    // precomputed divisor for acceleration calcs.
+    // precomputed divisor for acceleration calc.
     accel_divisor: u64,
     // precomputed delay of the first step
-    inital_delay: u64,
+    initial_delay: u64,
 }
 
 impl Stepper {
     ///Creates new stepper motor instance.
     ///units:
-    ///* `Travel_limit`: max steps from home the stepper motor can safely travel.
+    ///* `travel_limit`: max steps from home the stepper motor can safely travel.
     ///* `max_speed`: max steps/sec the stepper motor can safely rotate.
     ///* `max_accel`: max steps/sec^2 the stepper motor can achieve.
-    ///* `dir_to_home`: the direction the motor spins when moving towards home.
+    ///* `start_vel`: steps/sec the stepper motor can jump to from rest, and stop from instantly.
     #[must_use]
     pub const fn new(
         travel_limit: NonZeroU32,
@@ -75,13 +77,22 @@ impl Stepper {
             max_speed,
             max_accel,
             start_vel,
-            curent_pos: None,
+            current_pos: None,
             max_stopping_distance: Self::compute_max_stopping_distance(
-                max_speed, start_vel, max_accel,
+                travel_limit,
+                max_speed,
+                start_vel,
+                max_accel,
+            ),
+            max_accel_distance: Self::compute_max_accel_distance(
+                travel_limit,
+                max_speed,
+                start_vel,
+                max_accel,
             ),
             cruise_delay: Self::compute_cruise_delay(max_speed),
             accel_divisor: Self::compute_accel_divisor(max_accel),
-            inital_delay: Self::compute_inital_delay(start_vel, max_accel),
+            initial_delay: Self::compute_initial_delay(start_vel, max_accel),
         }
     }
 
@@ -89,22 +100,76 @@ impl Stepper {
         TICK_HZ.pow(2) / max_accel.get() as u64
     }
 
-    const fn compute_inital_delay(start_vel: u32, max_accel: NonZeroU32) -> u64 {
+    const fn compute_initial_delay(start_vel: u32, max_accel: NonZeroU32) -> u64 {
         // p1 = F/sqrt(v0^2 + 2a), evaluated as sqrt(F^2/(v0^2 + 2a)) so the speed is not rounded
         // down to a whole step/sec before the division.
         (TICK_HZ.pow(2) / ((start_vel as u64).pow(2) + 2 * max_accel.get() as u64)).isqrt()
     }
 
+    /// Length of the deceleration ramp, in steps.
+    /// The ideal formula for this is `(max_speed^2 - start_vel^2)/(2*max_accel)`,
+    /// but the integer ramp does not follow the ideal curve exactly,
+    /// so we walk the ramp instead of trusting the formula.
     const fn compute_max_stopping_distance(
+        travel_limit: NonZeroU32,
         max_speed: NonZeroU32,
         start_vel: u32,
         max_accel: NonZeroU32,
     ) -> u32 {
-        (max_speed
-            .get()
-            .saturating_pow(2)
-            .saturating_sub(start_vel.saturating_pow(2)))
-            / (2 * max_accel.get())
+        let accel_divisor = Self::compute_accel_divisor(max_accel);
+        let initial_delay = Self::compute_initial_delay(start_vel, max_accel);
+        let mut delay = Self::compute_cruise_delay(max_speed).as_ticks();
+        let mut rem = 0;
+        let mut steps = 0;
+        // a ramp longer than the whole axis can never be run,
+        // so there is no point counting past it (and it keeps this loop bounded for a misconfigured stepper).
+        while delay < initial_delay && steps < travel_limit.get() {
+            let (delay_diff, new_rem) = ramp_step(delay, rem, accel_divisor);
+            rem = new_rem;
+            delay = delay.saturating_add(delay_diff);
+            steps += 1;
+        }
+        steps
+    }
+
+    /// Length of the acceleration ramp, in steps,
+    /// counted the same way as `compute_max_stopping_distance` so the two are comparable.
+    /// The first step of a move jumps straight to `initial_delay` instead of ramping,
+    /// so a move needs one more step than this to reach `max_speed`.
+    const fn compute_max_accel_distance(
+        travel_limit: NonZeroU32,
+        max_speed: NonZeroU32,
+        start_vel: u32,
+        max_accel: NonZeroU32,
+    ) -> u32 {
+        let accel_divisor = Self::compute_accel_divisor(max_accel);
+        let cruise_delay = Self::compute_cruise_delay(max_speed).as_ticks();
+        let mut delay = Self::compute_initial_delay(start_vel, max_accel);
+        let mut rem = 0;
+        let mut steps = 0;
+        while delay > cruise_delay && steps < travel_limit.get() {
+            let (delay_diff, new_rem) = ramp_step(delay, rem, accel_divisor);
+            rem = new_rem;
+            delay = delay.saturating_sub(delay_diff);
+            steps += 1;
+        }
+        steps
+    }
+
+    /// How many of a `move_distance` step move to spend decelerating.
+    fn stopping_distance(&self, move_distance: u32) -> u32 {
+        // The two ramps are not the same length:
+        // the approximation overshoots while accelerating and undershoots while decelerating,
+        // so deceleration needs a few more steps than acceleration to cover the same speed range.
+        // Give deceleration those steps out of the acceleration half of the move,
+        // or a move too short to reach max_speed runs out of steps before the ramp is done and the last step has to stop from well above start_vel.
+        let ramp_lag = self
+            .max_stopping_distance
+            .saturating_sub(self.max_accel_distance);
+        min(
+            self.max_stopping_distance,
+            move_distance.saturating_add(ramp_lag).div_ceil(2),
+        )
     }
 
     const fn compute_cruise_delay(max_speed: NonZeroU32) -> Duration {
@@ -112,7 +177,7 @@ impl Stepper {
     }
 
     pub fn homing_move<F: FnMut() -> bool>(&mut self, endstop_fn: F) -> HomingMove<'_, F> {
-        self.curent_pos = None;
+        self.current_pos = None;
         let delay = Duration::from_ticks(TICK_HZ / u64::from(self.start_vel));
         HomingMove {
             stepper: self,
@@ -127,19 +192,13 @@ impl Stepper {
         &mut self,
         target_pos: u32,
     ) -> Result<(PlannedMove<'_>, Direction), StepperError> {
-        match self.curent_pos {
+        match self.current_pos {
             None => Err(StepperError::NotHomed),
             Some(_) if target_pos > self.travel_limit.get() => Err(StepperError::MoveOutOfBounds),
             Some(current_pos) => {
                 let move_distance: u32 = current_pos.abs_diff(target_pos);
 
-                // TODO: Not sure why I need that +2, but somewhere we have an off-by-2, as without
-                // this we have too much deccel on the last step of a move.
-                let stopping_distance = if move_distance > self.max_stopping_distance * 2 {
-                    self.max_stopping_distance
-                } else {
-                    move_distance.div_ceil(2)
-                } + 2;
+                let stopping_distance = self.stopping_distance(move_distance);
 
                 let dir = if current_pos < target_pos {
                     Direction::AwayFromHome
@@ -167,7 +226,7 @@ impl Stepper {
         continue_fn: F,
         dir: Direction,
     ) -> Result<ContinuousJog<'_, F>, StepperError> {
-        match self.curent_pos {
+        match self.current_pos {
             Some(_) => {
                 let delay = Duration::from_ticks(TICK_HZ / u64::from(self.start_vel));
                 Ok(ContinuousJog {
@@ -190,6 +249,18 @@ impl Stepper {
     /// Sets the travel limit of this [`Stepper`] in steps.
     pub fn set_travel_limit(&mut self, travel_limit: NonZeroU32) {
         self.travel_limit = travel_limit;
+        self.max_stopping_distance = Self::compute_max_stopping_distance(
+            travel_limit,
+            self.max_speed,
+            self.start_vel,
+            self.max_accel,
+        );
+        self.max_accel_distance = Self::compute_max_accel_distance(
+            travel_limit,
+            self.max_speed,
+            self.start_vel,
+            self.max_accel,
+        );
     }
 
     /// Returns the max speed of this [`Stepper`] in steps/sec.
@@ -201,8 +272,18 @@ impl Stepper {
     /// Sets the max speed of this [`Stepper`] in steps/sec.
     pub fn set_max_speed(&mut self, max_speed: NonZeroU32) {
         self.max_speed = max_speed;
-        self.max_stopping_distance =
-            Self::compute_max_stopping_distance(max_speed, self.start_vel, self.max_accel);
+        self.max_stopping_distance = Self::compute_max_stopping_distance(
+            self.travel_limit,
+            max_speed,
+            self.start_vel,
+            self.max_accel,
+        );
+        self.max_accel_distance = Self::compute_max_accel_distance(
+            self.travel_limit,
+            max_speed,
+            self.start_vel,
+            self.max_accel,
+        );
         self.cruise_delay = Self::compute_cruise_delay(max_speed);
     }
 
@@ -215,10 +296,20 @@ impl Stepper {
     /// Sets the max accel of this [`Stepper`] in steps/sec^2.
     pub fn set_max_accel(&mut self, max_accel: NonZeroU32) {
         self.max_accel = max_accel;
-        self.max_stopping_distance =
-            Self::compute_max_stopping_distance(self.max_speed, self.start_vel, max_accel);
+        self.max_stopping_distance = Self::compute_max_stopping_distance(
+            self.travel_limit,
+            self.max_speed,
+            self.start_vel,
+            max_accel,
+        );
+        self.max_accel_distance = Self::compute_max_accel_distance(
+            self.travel_limit,
+            self.max_speed,
+            self.start_vel,
+            max_accel,
+        );
         self.accel_divisor = Self::compute_accel_divisor(max_accel);
-        self.inital_delay = Self::compute_inital_delay(self.start_vel, max_accel);
+        self.initial_delay = Self::compute_initial_delay(self.start_vel, max_accel);
     }
 
     /// Returns the start vel of this [`Stepper`] in steps/sec.
@@ -230,20 +321,30 @@ impl Stepper {
     /// Sets the start vel of this [`Stepper`] in steps/sec.
     pub fn set_start_vel(&mut self, start_vel: u32) {
         self.start_vel = start_vel;
-        self.max_stopping_distance =
-            Self::compute_max_stopping_distance(self.max_speed, start_vel, self.max_accel);
-        self.inital_delay = Self::compute_inital_delay(start_vel, self.max_accel);
+        self.max_stopping_distance = Self::compute_max_stopping_distance(
+            self.travel_limit,
+            self.max_speed,
+            start_vel,
+            self.max_accel,
+        );
+        self.max_accel_distance = Self::compute_max_accel_distance(
+            self.travel_limit,
+            self.max_speed,
+            start_vel,
+            self.max_accel,
+        );
+        self.initial_delay = Self::compute_initial_delay(start_vel, self.max_accel);
     }
 
-    /// Returns the curent pos of this [`Stepper`].
+    /// Returns the current pos of this [`Stepper`].
     #[must_use]
     pub fn pos(&self) -> Option<u32> {
-        self.curent_pos
+        self.current_pos
     }
 
     fn update_pos_one_step(&mut self, dir: Direction) {
-        self.curent_pos = Some(
-            self.curent_pos
+        self.current_pos = Some(
+            self.current_pos
                 .expect("Attempted to update position while not homed.")
                 .saturating_add_signed(if dir == Direction::AwayFromHome {
                     1
@@ -261,9 +362,11 @@ enum Phase {
     Decelerate,
 }
 
-/// A move towards 0 that continues until some function is true. This function is intended to poll
-/// and endstop of some kind. Once it hits the endstop, it sets `pos()` to zero. After the iterator
-/// ends, you can call `steps_moved` to get how far the stepper had to move in order to home.
+/// A move towards 0 that continues until some function is true.
+/// This function is intended to poll an endstop of some kind.
+/// Once it hits the endstop, it sets `pos()` to zero.
+/// After the iterator ends,
+/// you can call `steps_moved` to get how far the stepper had to move in order to home.
 #[derive(Format, Debug)]
 pub struct HomingMove<'a, F: FnMut() -> bool> {
     stepper: &'a mut Stepper,
@@ -285,9 +388,9 @@ impl<F: FnMut() -> bool> Iterator for HomingMove<'_, F> {
     type Item = Duration;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.stepper.curent_pos.is_none() {
+        if self.stepper.current_pos.is_none() {
             if (self.endstop_fn)() {
-                self.stepper.curent_pos = Some(0);
+                self.stepper.current_pos = Some(0);
                 None
             } else {
                 self.steps_moved += 1;
@@ -297,6 +400,15 @@ impl<F: FnMut() -> bool> Iterator for HomingMove<'_, F> {
             None
         }
     }
+}
+
+/// One `LeibRamp` update.
+/// Takes the current delay period in ticks and the remainder carried from the last update,
+/// and returns the magnitude of the change in delay period along with the new remainder.
+/// Subtract the change to accelerate and add it to decelerate.
+const fn ramp_step(p: u64, rem: u64, accel_divisor: u64) -> (u64, u64) {
+    let pdividend = p.saturating_pow(3).saturating_add(rem);
+    (pdividend / accel_divisor, pdividend % accel_divisor)
 }
 
 /// An iterator over the delay in between steps for a fully planned move.
@@ -312,15 +424,11 @@ pub struct PlannedMove<'a> {
 }
 
 impl PlannedMove<'_> {
-    /// One LeibRamp update.
-    /// Takes the current delay period in ticks,
-    /// carries the remainder forward,
-    /// and returns the magnitude of the change in delay period.
-    /// Subtract it to accelerate and adds it to decelerate.
+    /// One `LeibRamp` update, carrying the remainder forward in `self`.
     fn ramp_step(&mut self, p: u64) -> u64 {
-        let pdividend = p.saturating_pow(3) + self.rem;
-        self.rem = pdividend % self.stepper.accel_divisor;
-        pdividend / self.stepper.accel_divisor
+        let (delay_diff, rem) = ramp_step(p, self.rem, self.stepper.accel_divisor);
+        self.rem = rem;
+        delay_diff
     }
 }
 
@@ -352,7 +460,7 @@ impl Iterator for PlannedMove<'_> {
                         p.saturating_sub(pdiff),
                         self.stepper.cruise_delay.as_ticks(),
                     ),
-                    self.stepper.inital_delay,
+                    self.stepper.initial_delay,
                 ));
 
                 if self.prev_delay == self.stepper.cruise_delay {
@@ -385,7 +493,7 @@ impl Iterator for PlannedMove<'_> {
                         p.saturating_add(pdiff),
                         self.stepper.cruise_delay.as_ticks(),
                     ),
-                    self.stepper.inital_delay,
+                    self.stepper.initial_delay,
                 ));
                 Some(self.prev_delay)
             }
@@ -433,7 +541,7 @@ mod test {
     #[test]
     fn test_home() {
         let mut stepper = Stepper::new(TRAVEL_LIMIT, MAX_VEL, MAX_ACCEL, START_VEL);
-        assert_eq!(stepper.curent_pos, None);
+        assert_eq!(stepper.current_pos, None);
 
         let mut endstop = [false, false, true].into_iter();
         let steps = stepper.homing_move(|| endstop.next().unwrap());
@@ -442,7 +550,7 @@ mod test {
             assert_eq!(step, Duration::from_hz(u64::from(START_VEL)));
             println!("{}", (TICK_HZ / step.as_ticks()));
         }
-        assert_eq!(stepper.curent_pos, Some(0));
+        assert_eq!(stepper.current_pos, Some(0));
     }
 
     #[test]
@@ -473,7 +581,7 @@ mod test {
             println!("{},{}", (TICK_HZ / step.as_ticks()), step.as_ticks());
             assert!(step >= Duration::from_hz(MAX_VEL.get().into()));
         }
-        assert_eq!(stepper.curent_pos, Some(TRAVEL_LIMIT.get()));
+        assert_eq!(stepper.current_pos, Some(TRAVEL_LIMIT.get()));
     }
 
     #[test]
@@ -483,11 +591,11 @@ mod test {
         steps.next();
         dbg!(&stepper);
 
-        let mut prev_step = stepper.inital_delay;
+        let mut prev_step = stepper.initial_delay;
         let mut time = Duration::from_ticks(0);
 
         let mut accels: [f64; _] = [0.0; 2];
-        let mut accel_indx = 0;
+        let mut accel_index = 0;
 
         let (steps, _) = stepper.planned_move(TRAVEL_LIMIT.get()).unwrap();
         println!("time,delay,vel,accel,avg_accel");
@@ -495,8 +603,8 @@ mod test {
             let prev_vel = TICK_HZ as f64 / prev_step as f64;
             let vel = TICK_HZ as f64 / step.as_ticks() as f64;
             let accel = (vel - prev_vel) * prev_vel;
-            accels[accel_indx] = accel;
-            accel_indx = (accel_indx + 1) % accels.len();
+            accels[accel_index] = accel;
+            accel_index = (accel_index + 1) % accels.len();
             let avg: f64 = accels.iter().sum::<f64>() / accels.len() as f64;
             println!(
                 "{},{},{},{},{}",
@@ -509,7 +617,7 @@ mod test {
 
             // due to the fact we are using a first degree approximation of the ideal formula
             // (which requires a square root), we sometimes go up 1% over our max acceleration.
-            // Also, for some reason there are single-step spikes, but they dissapear when taking a
+            // Also, for some reason there are single-step spikes, but they disappear when taking a
             // 2 step moving average.
             assert!(avg.abs() <= f64::from(MAX_ACCEL.get()) + (f64::from(MAX_ACCEL.get()) / 1.0));
 
@@ -519,7 +627,7 @@ mod test {
 
         let final_vel = TICK_HZ as f64 / prev_step as f64;
         let final_accel = (f64::from(stepper.start_vel) - final_vel) * final_vel;
-        accels[accel_indx] = final_accel;
+        accels[accel_index] = final_accel;
         let avg: f64 = accels.iter().sum::<f64>() / accels.len() as f64;
         println!(
             "{},{},{},{},{}",
@@ -531,7 +639,40 @@ mod test {
         );
 
         assert!(final_accel.abs() <= f64::from(MAX_ACCEL.get()) + 1.0);
-        assert_eq!(stepper.curent_pos, Some(TRAVEL_LIMIT.get()));
+        assert_eq!(stepper.current_pos, Some(TRAVEL_LIMIT.get()));
+    }
+
+    #[test]
+    fn test_move_ends_at_start_vel() {
+        // whatever the move distance, the last step has to be slow enough that stopping dead
+        // from it stays within max_accel. MAX_VEL reaches its cruise speed well inside the
+        // axis, FAST_VEL needs most of the axis to ramp, so between them the moves land on
+        // both sides of the trapezoid/triangle split.
+        const FAST_VEL: NonZeroU32 = NonZeroU32::new(400).unwrap();
+
+        for max_vel in [MAX_VEL, FAST_VEL] {
+            let mut stepper = Stepper::new(TRAVEL_LIMIT, max_vel, MAX_ACCEL, START_VEL);
+            let mut steps = stepper.homing_move(|| true);
+            steps.next();
+            dbg!(&stepper);
+
+            for distance in [1, 2, 3, 17, 64, 193, 500, 934, 1024, TRAVEL_LIMIT.get()] {
+                let (steps, _) = stepper.planned_move(distance).unwrap();
+                let final_delay = steps.last().unwrap();
+                let final_vel = TICK_HZ as f64 / final_delay.as_ticks() as f64;
+                let final_accel = (f64::from(START_VEL) - final_vel) * final_vel;
+                println!("{distance} step move ended at {final_vel} steps/sec");
+                assert!(
+                    final_accel.abs() <= f64::from(MAX_ACCEL.get()) + 1.0,
+                    "stopping a {distance} step move from {final_vel} steps/sec takes \
+                    {final_accel} steps/sec^2"
+                );
+
+                // back home, ready for the next distance.
+                let (steps, _) = stepper.planned_move(0).unwrap();
+                steps.last();
+            }
+        }
     }
 
     #[test]
@@ -541,11 +682,11 @@ mod test {
         steps.next();
         dbg!(&stepper);
 
-        let mut prev_step = stepper.inital_delay;
+        let mut prev_step = stepper.initial_delay;
         let mut time = Duration::from_ticks(0);
 
         let mut accels: [f64; _] = [0.0; 2];
-        let mut accel_indx = 0;
+        let mut accel_index = 0;
 
         let (steps, _) = stepper.planned_move(MAX_ACCEL.get()).unwrap();
         println!("time,delay,vel,accel,avg_accel");
@@ -553,8 +694,8 @@ mod test {
             let prev_vel = TICK_HZ as f64 / prev_step as f64;
             let vel = TICK_HZ as f64 / step.as_ticks() as f64;
             let accel = (vel - prev_vel) * prev_vel;
-            accels[accel_indx] = accel;
-            accel_indx = (accel_indx + 1) % accels.len();
+            accels[accel_index] = accel;
+            accel_index = (accel_index + 1) % accels.len();
             let avg: f64 = accels.iter().sum::<f64>() / accels.len() as f64;
             println!(
                 "{},{},{},{},{}",
@@ -565,9 +706,8 @@ mod test {
                 avg,
             );
 
-            // due to the fact we are using a first degree approximation of the ideal formula
-            // (which requires a square root), we sometimes go up 1% over our max acceleration.
-            // Also, for some reason there are single-step spikes, but they dissapear when taking a
+            // due to the fact we are using a first degree approximation of the ideal formula (which requires a square root), we sometimes go up 1% over our max acceleration.
+            // Also, for some reason there are single-step spikes, but they disappear when taking a
             // 2 step moving average.
             assert!(avg.abs() <= f64::from(MAX_ACCEL.get()) + (f64::from(MAX_ACCEL.get()) / 1.0));
 
@@ -577,7 +717,7 @@ mod test {
 
         let final_vel = TICK_HZ as f64 / prev_step as f64;
         let final_accel = (f64::from(stepper.start_vel) - final_vel) * final_vel;
-        accels[accel_indx] = final_accel;
+        accels[accel_index] = final_accel;
         let avg: f64 = accels.iter().sum::<f64>() / accels.len() as f64;
         println!(
             "{},{},{},{},{}",
@@ -589,6 +729,6 @@ mod test {
         );
 
         assert!(final_accel.abs() <= f64::from(MAX_ACCEL.get()) + 1.0);
-        assert_eq!(stepper.curent_pos, Some(MAX_ACCEL.get()));
+        assert_eq!(stepper.current_pos, Some(MAX_ACCEL.get()));
     }
 }

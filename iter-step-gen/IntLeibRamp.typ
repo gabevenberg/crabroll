@@ -37,7 +37,7 @@ This modification was developed for `iter-step-gen`, a Rust-based asynchronous s
 With the following inputs,
 $
     d & = "move distance" \
-  v_0 & = "Inital speed "("steps"/"sec") \
+  v_0 & = "Initial speed "("steps"/"sec") \
     v & = "Max speed "("steps"/"sec") \
     F & = "tick frequency "("Hz") \
     a & = "target acceleration "("steps"/"sec"^2)
@@ -91,8 +91,8 @@ $ p=p plus.minus p^3/m^(-1) $ <plus_minus>
 
 Unfortunately, the flooring after every division inherent in integer arithmetic reduces precision significantly,
 and causes the acceleration curve to be asymmetrical with respect to the deceleration curve.
-This can be fixed, however, by storing the remainder of each division and adding that remainder to the next iteration.
-@plus_minus the following pair of equations:
+This can be mostly fixed, however, by storing the remainder of each division and adding that remainder to the next iteration, turning
+@plus_minus into the following pair of equations:
 $
   p & =p plus.minus (p^3 + r)/m^(-1) \
   r & =(p^3 + r) mod m^(-1)
@@ -107,13 +107,13 @@ where $q = m p^2$.
 We can apply similar transformations to this. As we have already calculated $m^(-1)$, we can redefine $q$ as:
 $ q=p^2/m^(-1) $ <redefined_q>
 
-and distribute $p$ in @original_enhancement:
+And distribute $p$ in @original_enhancement:
 $ p=p plus.minus p q + p q^2 $ <distribute_p>
 
 Unfortunately, $q$ is also very close to 0, so we instead calculate the inverse,
 $q^(-1) = m^(-1)/p^2$.
 
-and divide rather than multiply in @distribute_p:
+And divide rather than multiply in @distribute_p:
 $ p=p plus.minus p/q + p/q^2 $ <div_q>
 
 Adding remainder storage is straightforward with this enhancement,
@@ -129,22 +129,74 @@ $ <enhancement_remainder_storage>
 Unlike Eidermans method, where this enhancement requires only one extra addition and one extra multiplication,
 in the integer form it requires 2 extra divisions and an addition.
 Due to the extra 2 divisions, and the extra space needed for the 2 extra remainders,
-this was deemed not worth the extra precision in the authors usecase.
+this was deemed not worth the extra precision in the authors use case.
+
+= Measuring the ramps <measuring_the_ramps>
+
+Remainder carrying removes most of the asymmetry between the two ramps, but not all of it.
+Two sources of error survive it, both leading to a shorter acceleration and longer deceleration than ideal.
+
+First, @plus_minus is a first degree approximation.
+Expanding @ideal_formula gives $p(1 plus.minus q + 3/2 q^2 plus.minus ...)$, where $q=m p^2$,
+with the same sign convention as @plus_minus,
+so dropping everything past the first term leaves $p$ on the fast side of the ideal curve,
+whether accelerating or decelerating.
+
+Second, $p$ is a whole number of ticks, and every update is calculated from $p^3$.
+The remainder carries the fraction lost by the division,
+but nothing carries the fraction lost by $p$ itself,
+leading to $p$ being consistently short.
+
+While both errors are tiny per step, neither of them cancels over the length of a ramp.
+Sitting consistently on the fast side means acceleration reaches $p_c$ in fewer updates than $S$,
+and deceleration needs more than $S$ to climb back to $p_1$.
+With the parameters used in the authors use case
+($v=255 "steps"/"sec"$, $v_0=50 "steps"/"sec"$, $a=64 "steps"/"sec"^2$ and $F=1 "MHz"$),
+$S$ works out to 488.5 steps,
+while the implemented ramp accelerates in 485 updates and decelerates in 490.
+
+This shows up at the end of a move.
+The deceleration phase ends when the target position is reached,
+wherever $p$ has got to by then,
+and the motor is expected to stop dead from that speed.
+A deceleration phase sized with $S$ therefore finishes a couple of steps short of $p_1$,
+and the last step of the move asks for more than $a$.
+A fudge factor on top of $S$ will fix that for only one set of parameters,
+as the size of the error depends on all of $v$, $v_0$, $a$ and $F$.
+
+Rather than look for a closed form for the error,
+we can measure both ramps directly,
+by running @remainder_carrying over them once when the planner is constructed:
+$
+  S_a & = "updates to get from" p_1 "to" p_c && quad "acceleration ramp length" \
+  S_d & = "updates to get from" p_c "to" p_1 && quad "deceleration ramp length" \
+    S_l & = S_d - S_a                          && quad "ramp lag" \
+$ <measured_ramps>
+
+Both counts should be capped at the length of the axis.
+A ramp that does not fit on the axis can never be run to completion anyway,
+and the cap keeps the two loops finite for a badly configured stepper.
 
 = Implementation considerations
 
 For convenience of the reader,
 the following are the remaining variables needed to implement a linear ramping step planner.
 $
-  p_1 & = F/sqrt(v_0^2 + 2a)                      && "delay period for inital step" \
-  p_c & = F/v                                     && "delay period for cruise period steps" \
-    S & = (v^2 - v_0^2)/(2a)                      && "distance needed for acceleration to "v \
-  S_a & = cases(S "if" d>2S, ceil d/2 "if" d<=2S) && "actual distance needed for acceleration/decceleration" \
-$ <implementaiton_vars>
+  p_1 & = F/sqrt(v_0^2 + 2a)            && "delay period for initial step" \
+  p_c & = F/v                           && "delay period for cruise period steps" \
+    S & = (v^2 - v_0^2)/(2a)            && "ideal distance needed for acceleration to "v \
+  S_m & = min(S_d, ceil((d + S_l)/2))     && "steps of a "d" step move to spend decelerating" \
+$ <implementation_vars>
+
+$S$ is not used directly, only $S_a$, $S_d$ and $S_l$ from @measured_ramps.
+A move that is long enough to reach $v$ needs $S_a$ updates to accelerate and $S_d$ updates to come back down.
+A move shorter than that splits its steps between the two ramps instead,
+and the split is not even, as deceleration wants $S_l$ more steps than acceleration.
+The $min$ covers both cases.
 
 A move can be split into 3 parts, the acceleration phase, the cruise phase, and the deceleration phase.
 During the acceleration phase, which lasts until $p <= p_c$, the $plus.minus$ is a subtraction.
-During the cruise phase, which lasts until the remaining steps in the move $<=S_a$, $p$ should be held constant at $p_c$.
+During the cruise phase, which lasts until the remaining steps in the move $<=S_m$, $p$ should be held constant at $p_c$.
 During the deceleration phase, which lasts until the target position is reached, the $plus.minus$ is an addition.
 
 Finally, the _ideal_ formula, useful in unit tests and verification, is:

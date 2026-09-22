@@ -119,7 +119,7 @@ async fn main(spawner: Spawner) {
 
     let flash = FlashStorage::new(peripherals.FLASH);
 
-    info!("IO initalized!");
+    info!("IO initialized!");
 
     let uart = Uart::new(
         peripherals.UART0,
@@ -131,7 +131,7 @@ async fn main(spawner: Spawner) {
     .with_tx(peripherals.GPIO21)
     .with_rx(peripherals.GPIO20)
     .into_async();
-    info!("UART initalized!");
+    info!("UART initialized!");
 
     let mut tmc2209 = Tmc2209::new(uart, [true, false, false, false])
         .await

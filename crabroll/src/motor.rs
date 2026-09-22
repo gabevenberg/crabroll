@@ -5,7 +5,7 @@ use crate::{CONFIRM_SIGNAL, CURRENT_POS, Command, DIR_TO_HOME, ERROR_SIGNAL, Err
 
 use defmt::{error, info};
 use embassy_embedded_hal::adapter::BlockingAsync;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Timer};
 use esp_bootloader_esp_idf::partitions::{
     self, DataPartitionSubType, PARTITION_TABLE_MAX_LEN, PartitionType,
 };
